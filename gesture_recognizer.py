@@ -1,4 +1,4 @@
-# gesture_recognizer.py - 닌자 게임임 인식 시스템 (완전판)
+# gesture_recognizer.py - 닌자 게임 인식 시스템 (완전판)
 
 import cv2
 import mediapipe as mp

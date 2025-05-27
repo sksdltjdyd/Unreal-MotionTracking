@@ -88,7 +88,7 @@ class GestureValidator:
         return True
 
 class NinjaGestureRecognizer:
-    """닌자 마스터 제스처 인식기"""
+    """닌자 게임임 제스처 인식기"""
     
     def __init__(self, osc_ip=None, osc_port=None):
         # OSC 설정

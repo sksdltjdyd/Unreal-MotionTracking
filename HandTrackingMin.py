@@ -1,3 +1,5 @@
+# 웹캠 트랙킹 기본 테스트트
+
 import cv2
 import mediapipe as mp
 import time

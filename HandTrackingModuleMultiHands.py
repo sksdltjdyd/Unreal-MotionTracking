@@ -1,3 +1,5 @@
+# 양손 트랙킹 테스트
+
 import cv2
 import mediapipe as mp
 import time

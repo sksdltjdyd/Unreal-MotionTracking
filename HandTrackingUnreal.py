@@ -1,3 +1,5 @@
+# 언리얼, 미디어파이프 연결 테스트
+
 import cv2
 import mediapipe as mp
 import time

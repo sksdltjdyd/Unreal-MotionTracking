@@ -8,27 +8,27 @@ from collections import deque
 
 class HandTracker:
     def __init__(self, osc_ip="127.0.0.1", osc_port=8000):
-        # OSC 클라이언트 설정
+        # OSC Client Settings
         self.client = udp_client.SimpleUDPClient(osc_ip, osc_port)
         
-        # 손가락 끝점 인덱스 (엄지, 검지, 중지, 약지, 새끼)
+        # Finger endpoint index (thumb, index finger, middle finger, ring finger, pinky)
         self.fingertip_ids = [4, 8, 12, 16, 20]
         
-        # 손가락 이름 매핑
+        # Finger Name Mapping
         self.finger_names = ["thumb", "index", "middle", "ring", "pinky"]
         
-        # 손 감지기 (양손 감지 활성화)
+        # Hand Sensor (Enable both hand detection)
         self.detector = htm.HandDetector(maxHands=2)
         
-        # 웹캠 설정
+        # Webcam Settings
         self.cap = cv2.VideoCapture(0)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         
-        # FPS 계산용
+        # For FPS calculation
         self.pTime = 0
         
-        # 데이터 스무딩을 위한 버퍼 (선택사항)
+        # Buffer for data smoothing
         self.smoothing_buffer_size = 3
         self.left_hand_buffer = {finger: deque(maxlen=self.smoothing_buffer_size) 
                                 for finger in self.finger_names}
@@ -51,17 +51,17 @@ class HandTracker:
     def send_hand_data(self, hand_landmarks, hand_label):
         """각 손의 모든 손가락 끝점 데이터를 OSC로 전송"""
         try:
-            # 각 손가락 끝점 좌표 추출 및 전송
+            # Extract and transfer coordinates for each finger endpoint
             for i, finger_id in enumerate(self.fingertip_ids):
                 if finger_id < len(hand_landmarks):
                     x, y = hand_landmarks[finger_id][1], hand_landmarks[finger_id][2]
                     finger_name = self.finger_names[i]
                     
-                    # 좌표 정규화 (0-1 범위로)
+                    # Coordinate Normalization (with a range of 0-1)
                     normalized_x = x / 1280.0  # 웹캠 너비로 나누기
                     normalized_y = y / 720.0   # 웹캠 높이로 나누기
                     
-                    # 스무딩 적용 (선택사항)
+                    # Apply smoothing
                     if hand_label == "Left":
                         smoothed_coords = self.smooth_coordinates(
                             self.left_hand_buffer[finger_name], 
@@ -73,14 +73,14 @@ class HandTracker:
                             [normalized_x, normalized_y]
                         )
                     
-                    # OSC 메시지 전송
+                    # Send OSC Messages
                     osc_address = f"/{hand_label.lower()}_hand/{finger_name}"
                     self.client.send_message(osc_address, smoothed_coords)
                     
-                    # 디버그 출력 (필요시 주석 해제)
+                    # Debug Output (uncomment if required)
                     # print(f"Sent: {osc_address} [{smoothed_coords[0]:.3f}, {smoothed_coords[1]:.3f}]")
             
-            # 손 전체 중심점도 전송 (손목 기준)
+            # Hand-wide center plot transmission (based on wrist)
             if len(hand_landmarks) > 0:
                 wrist_x, wrist_y = hand_landmarks[0][1], hand_landmarks[0][2]
                 normalized_wrist = [wrist_x / 1280.0, wrist_y / 720.0]
@@ -100,29 +100,29 @@ class HandTracker:
                 print("웹캠에서 프레임을 읽을 수 없습니다.")
                 break
             
-            # 프레임 좌우 반전 (거울 효과)
+            # Frame Inversion (mirror effect)
             frame = cv2.flip(frame, 1)
             
-            # 손 감지
+            # Hand Sensing
             frame = self.detector.findHands(frame, draw=True)
             
-            # 다중 손 위치 감지
+            # Multiple hand position detection
             multi_hand_landmarks = self.detector.findMultiHandPositions(frame)
             
             if multi_hand_landmarks:
                 for hand_info in multi_hand_landmarks:
                     hand_landmarks = hand_info['landmarks']
-                    hand_label = hand_info['label']  # 'Left' 또는 'Right'
+                    hand_label = hand_info['label']  # 'Left' OR 'Right'
                     
-                    # 각 손의 데이터를 OSC로 전송
+                    # Transfer data from each hand to OSC
                     self.send_hand_data(hand_landmarks, hand_label)
             
-            # FPS 계산 및 표시
+            # Calculate and display FPS
             cTime = time.time()
             fps = 1 / (cTime - self.pTime) if self.pTime != 0 else 0
             self.pTime = cTime
             
-            # 정보 표시
+            # Print Information
             cv2.putText(frame, f"FPS: {int(fps)}", (10, 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             cv2.putText(frame, f"Hands: {len(multi_hand_landmarks) if multi_hand_landmarks else 0}", 
@@ -130,22 +130,22 @@ class HandTracker:
             cv2.putText(frame, "Press 'q' to quit", (10, 110), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
-            # 화면 표시
+            # Displaying the screen
             cv2.imshow("Hand Tracking - OSC Communication", frame)
             
             # 'q' 키로 종료
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
             
-            # 전송 속도 조절
-            time.sleep(0.02)  # 50Hz 업데이트
+            # Transmission speed control
+            time.sleep(0.02)  # 50Hz Update
         
-        # 정리
+        # Return
         self.cap.release()
         cv2.destroyAllWindows()
         print("손 추적 종료")
 
-# HandTrackingModule.py에 추가할 메서드들
+# Methods to add to HandTrackingModule.py
 class HandDetectorExtended(htm.HandDetector):
     def findMultiHandPositions(self, img, draw=True):
         """다중 손 위치 감지 (양손 지원)"""
@@ -174,7 +174,7 @@ class HandDetectorExtended(htm.HandDetector):
         return multiHandData
 
 if __name__ == "__main__":
-    # 사용 예시
+    # Examples
     try:
         tracker = HandTracker(osc_ip="127.0.0.1", osc_port=8000)
         tracker.run()

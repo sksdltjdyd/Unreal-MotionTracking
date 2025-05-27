@@ -1,3 +1,5 @@
+# 트랙킹 모듈 생성성
+
 import cv2
 import mediapipe as mp
 import time

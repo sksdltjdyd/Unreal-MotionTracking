@@ -58,8 +58,8 @@ class HandTracker:
                     finger_name = self.finger_names[i]
                     
                     # Coordinate Normalization (with a range of 0-1)
-                    normalized_x = x / 1280.0  # 웹캠 너비로 나누기
-                    normalized_y = y / 720.0   # 웹캠 높이로 나누기
+                    normalized_x = x / 1280.0  # Divide by Webcam Width
+                    normalized_y = y / 720.0   # Divide by Webcam Height
                     
                     # Apply smoothing
                     if hand_label == "Left":

@@ -48,10 +48,11 @@ class Config:
     FLICK_SPEED_THRESHOLD = 500  # pixels/sec
     FIST_ANGLE_THRESHOLD = 90    # degrees
     PALM_EXTEND_THRESHOLD = 150  # degrees
-    CIRCLE_STD_THRESHOLD = 30    # pixels (원의 반지름 균일도)
-    CIRCLE_MIN_POINTS = 15       # 원 제스처 판정을 위한 최소 포인트 수
-    CIRCLE_MIN_RADIUS_MEAN = 10  # 원으로 간주되기 위한 최소 평균 반지름 (픽셀 단위)
-    CIRCLE_MIN_TOTAL_ANGLE = np.pi * 1.5 # 원으로 간주되기 위한 최소 총 각도 변화 (약 270도)
+    CIRCLE_STD_THRESHOLD = 40       # 30 -> 40 (더 관대하게)
+    CIRCLE_MIN_POINTS = 12          # 15 -> 12 (더 빠른 인식)
+    CIRCLE_MIN_RADIUS_MEAN = 20     # 10 -> 20 (적당한 크기)
+    CIRCLE_MAX_RADIUS_MEAN = 200    # 새로 추가 (너무 큰 원 제외)
+    CIRCLE_MIN_TOTAL_ANGLE = np.pi * 1.2  # 1.5π -> 1.2π (216도로 완화)
 
     # 스무딩 설정 (명시적으로 사용되진 않으나 향후 확장 가능)
     SMOOTHING_BUFFER_SIZE = 3
@@ -288,41 +289,97 @@ class NinjaGestureRecognizer:
         return False, 0.0
 
     def detect_circle(self, landmarks, hand_label, img_width, img_height):
-        """원 그리기 감지 (검지 끝 사용)"""
+        """원 그리기 감지 (검지 끝 사용) - 개선된 버전"""
         index_tip_lm = landmarks[self.INDEX_TIP]
         current_pos = np.array([index_tip_lm.x * img_width, index_tip_lm.y * img_height])
         
+        # 포인트가 너무 가까우면 추가하지 않음 (노이즈 감소)
+        if len(self.circle_points[hand_label]) > 0:
+            last_pos = self.circle_points[hand_label][-1]
+            if self.calculate_distance(current_pos, last_pos) < 5:  # 5픽셀 미만이면 스킵
+                return False, None
+        
         self.circle_points[hand_label].append(current_pos)
         
-        if len(self.circle_points[hand_label]) >= Config.CIRCLE_MIN_POINTS:
+        # 포인트 수 조건 완화 (15 -> 12)
+        if len(self.circle_points[hand_label]) >= 12:
             points = np.array(self.circle_points[hand_label])
-            center = np.mean(points, axis=0) # 포인트들의 평균 중심
-            distances_from_center = np.linalg.norm(points - center, axis=1) # 각 포인트와 중심 간 거리
             
+            # 시작점과 끝점의 거리 확인 (원이 닫혔는지)
+            start_point = points[0]
+            end_point = points[-1]
+            closing_distance = self.calculate_distance(start_point, end_point)
+            
+            # 전체 경로 길이 계산
+            total_path_length = 0
+            for i in range(1, len(points)):
+                total_path_length += self.calculate_distance(points[i-1], points[i])
+            
+            # 중심점과 평균 반지름 계산
+            center = np.mean(points, axis=0)
+            distances_from_center = np.linalg.norm(points - center, axis=1)
             mean_radius = np.mean(distances_from_center)
             std_dev_radius = np.std(distances_from_center)
-
-            # 반지름 표준편차가 작고 (균일한 원), 평균 반지름이 너무 작지 않으면 원으로 판단
-            if std_dev_radius < Config.CIRCLE_STD_THRESHOLD and mean_radius > Config.CIRCLE_MIN_RADIUS_MEAN:
-                total_angle_change = 0
+            
+            # 원형도 계산 (0~1, 1에 가까울수록 완벽한 원)
+            if mean_radius > 0:
+                circularity = 1 - (std_dev_radius / mean_radius)
+            else:
+                circularity = 0
+            
+            # 조건 완화
+            # 1. 표준편차 조건 완화 (30 -> 40)
+            # 2. 최소 반지름 조건 완화 (10 -> 20)
+            # 3. 원형도 추가 (0.6 이상이면 원으로 간주)
+            is_circular = (
+                (std_dev_radius < 40 or circularity > 0.6) and 
+                mean_radius > 20 and
+                mean_radius < 200  # 너무 큰 원 제외
+            )
+            
+            # 닫힌 경로인지 확인 (시작점과 끝점이 가까운지)
+            is_closed = closing_distance < mean_radius * 0.5  # 반지름의 50% 이내
+            
+            if is_circular and (is_closed or len(points) >= 18):
+                # 방향 판정 개선
+                total_angle = 0
+                valid_segments = 0
+                
                 for i in range(len(points) - 1):
-                    p_curr = points[i]
-                    p_next = points[i+1]
+                    p_curr = points[i] - center
+                    p_next = points[i + 1] - center
                     
-                    angle_segment = np.arctan2(p_next[1] - center[1], p_next[0] - center[0]) - \
-                                    np.arctan2(p_curr[1] - center[1], p_curr[0] - center[0])
+                    # 각도 계산
+                    angle_curr = np.arctan2(p_curr[1], p_curr[0])
+                    angle_next = np.arctan2(p_next[1], p_next[0])
+                    angle_diff = angle_next - angle_curr
                     
-                    # 각도 변화량을 -pi ~ pi 범위로 정규화
-                    if angle_segment > np.pi: angle_segment -= 2 * np.pi
-                    if angle_segment < -np.pi: angle_segment += 2 * np.pi
-                    total_angle_change += angle_segment
-
-                # 총 각도 변화량이 특정 임계값(예: 270도)을 넘으면 원으로 최종 판단
-                if abs(total_angle_change) > Config.CIRCLE_MIN_TOTAL_ANGLE:
-                    # 이미지 좌표계 (y축 아래로 증가) 기준: total_angle_change > 0 이면 반시계(ccw)
-                    direction = "ccw" if total_angle_change > 0 else "cw"
-                    self.circle_points[hand_label].clear() # 포인트 기록 초기화
+                    # -pi ~ pi 범위로 정규화
+                    if angle_diff > np.pi:
+                        angle_diff -= 2 * np.pi
+                    elif angle_diff < -np.pi:
+                        angle_diff += 2 * np.pi
+                    
+                    # 너무 큰 각도 변화는 노이즈로 간주
+                    if abs(angle_diff) < np.pi / 2:  # 90도 미만
+                        total_angle += angle_diff
+                        valid_segments += 1
+                
+                # 유효한 세그먼트가 충분히 있고, 총 각도가 충분하면 원으로 판정
+                if valid_segments >= 6 and abs(total_angle) > np.pi * 1.2:  # 216도 이상 (1.5π -> 1.2π)
+                    direction = "ccw" if total_angle > 0 else "cw"
+                    self.circle_points[hand_label].clear()
+                    
+                    # 디버그 출력 (선택사항)
+                    logger.debug(f"Circle detected: radius={mean_radius:.1f}, circularity={circularity:.2f}, angle={np.degrees(total_angle):.0f}°")
+                    
                     return True, direction
+            
+            # 포인트가 너무 많이 쌓이면 오래된 것부터 제거
+            if len(self.circle_points[hand_label]) > 25:
+                # 앞쪽 5개 제거
+                for _ in range(5):
+                    self.circle_points[hand_label].popleft()
         
         return False, None
 

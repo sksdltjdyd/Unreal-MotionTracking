@@ -8,6 +8,7 @@ from collections import deque
 from pythonosc import udp_client, osc_bundle_builder, osc_message_builder
 from enum import Enum
 import logging
+import gesture_stabilizer as GestureStabilizer
 
 # 로깅 설정
 logging.basicConfig(
@@ -88,13 +89,20 @@ class GestureValidator:
         return True
 
 class NinjaGestureRecognizer:
-    """닌자 게임임 제스처 인식기"""
+    """닌자 게임 제스처 인식기"""
     
     def __init__(self, osc_ip=None, osc_port=None):
         # OSC 설정
         self.client = udp_client.SimpleUDPClient(
             osc_ip or Config.OSC_IP, 
             osc_port or Config.OSC_PORT
+        )
+
+         # 안정화 모듈 추가
+        self.stabilizer = GestureStabilizer(
+            stability_window=0.3,      # 0.3초 동안 제스처 유지해야 인식
+            confidence_threshold=0.8,   # 80% 이상 신뢰도만
+            cooldown_time=0.5          # 같은 제스처는 0.5초 후 재사용
         )
         
         # MediaPipe 초기화
@@ -402,10 +410,26 @@ class NinjaGestureRecognizer:
                     hand_landmarks, hand_label, frame.shape
                 )
                 
-                # OSC 전송
-                if gesture_type != GestureType.NONE:
+                # 안정화 필터 적용
+                should_send, stabilized_data = self.stabilizer.should_send_gesture(
+                    gesture_type, 
+                    gesture_data.get("confidence", 0),
+                    hand_label
+                )
+                
+                if should_send and gesture_type != GestureType.NONE:
+                    # OSC 전송
                     self.send_gesture_osc(gesture_type, gesture_data, hand_label)
-                    debug_info.append(f"{hand_label}: {gesture_type.value}")
+                    debug_info.append(f"{hand_label}: {gesture_type.value} ✓")
+                else:
+                    # 대기 중인 제스처 표시
+                    stats = self.stabilizer.get_statistics()
+                    if stats["current_gesture"] != "none":
+                        progress = min(stats["stability_progress"] / 0.3, 1.0)
+                        debug_info.append(f"{hand_label}: {stats['current_gesture']} ({progress*100:.0f}%)")
+        else:
+            # 손이 없을 때 리셋
+            self.stabilizer.reset_if_idle()
         
         # 손 감지 상태 전송
         hand_count = len(results.multi_hand_landmarks) if results.multi_hand_landmarks else 0
@@ -419,6 +443,48 @@ class NinjaGestureRecognizer:
     def cleanup(self):
         """리소스 정리"""
         self.hands.close()
+
+    # 시각적 피드백 추가 (선택사항)
+def draw_gesture_progress(frame, progress, gesture_type, position=(50, 100)):
+    """제스처 인식 진행도 표시"""
+    import cv2
+    
+    # 진행도 바 배경
+    cv2.rectangle(frame, 
+                  position, 
+                  (position[0] + 200, position[1] + 30), 
+                  (100, 100, 100), 
+                  -1)
+    
+    # 진행도 바
+    bar_width = int(200 * progress)
+    if bar_width > 0:
+        cv2.rectangle(frame, 
+                      position, 
+                      (position[0] + bar_width, position[1] + 30), 
+                      (0, 255, 0), 
+                      -1)
+    
+    # 텍스트
+    cv2.putText(frame, 
+                f"{gesture_type}: {progress*100:.0f}%", 
+                (position[0], position[1] - 10), 
+                cv2.FONT_HERSHEY_SIMPLEX, 
+                0.6, 
+                (255, 255, 255), 
+                2)
+
+# 사용 예시
+if __name__ == "__main__":
+    # 더 안정적인 설정으로 시작
+    recognizer = NinjaGestureRecognizer()
+    
+    # 커스텀 안정화 설정 (선택사항)
+    recognizer.stabilizer = GestureStabilizer(
+        stability_window=0.4,      # 더 긴 안정화 시간
+        confidence_threshold=0.85,  # 더 높은 신뢰도
+        cooldown_time=0.7          # 더 긴 쿨다운
+    )
 
 class NinjaMasterHandTracker:
     """닌자 마스터 메인 트래커"""

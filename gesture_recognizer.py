@@ -1,4 +1,4 @@
-# gesture_recognizer.py - 닌자 게임 인식 시스템 (완전판)
+# gesture_recognizer.py - 닌자 게임 인식 시스템 (수정 완료 버전)
 
 import cv2
 import mediapipe as mp
@@ -17,14 +17,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 class GestureType(Enum):
     """제스처 타입 정의"""
     NONE = "none"
     FLICK = "flick"
     FIST = "fist"
     PALM_PUSH = "palm_push"
-    CROSS_BLOCK = "cross_block" # 원본 Enum에 있었으나 감지 로직에는 명시적으로 사용되지 않음
+    CROSS_BLOCK = "cross_block"
     CIRCLE = "circle"
+
 
 class Config:
     """설정값 관리"""
@@ -32,10 +34,10 @@ class Config:
     OSC_IP = "127.0.0.1"
     OSC_PORT = 7000
     
-    # MediaPipe 설정
+    # MediaPipe 설정 - 인식률 향상
     MAX_HANDS = 2
-    MIN_DETECTION_CONFIDENCE = 0.7
-    MIN_TRACKING_CONFIDENCE = 0.5
+    MIN_DETECTION_CONFIDENCE = 0.5  # 더 쉽게 손 감지
+    MIN_TRACKING_CONFIDENCE = 0.3   # 더 부드러운 추적
     MODEL_COMPLEXITY = 1
     
     # 카메라 설정
@@ -44,24 +46,23 @@ class Config:
     CAMERA_FPS = 30
     CAMERA_BUFFER_SIZE = 1
     
-    # 제스처 임계값
-    FLICK_SPEED_THRESHOLD = 500  # pixels/sec
-    FIST_ANGLE_THRESHOLD = 90    # degrees
-    PALM_EXTEND_THRESHOLD = 150  # degrees
-    CIRCLE_STD_THRESHOLD = 40       # 30 -> 40 (더 관대하게)
-    CIRCLE_MIN_POINTS = 12          # 15 -> 12 (더 빠른 인식)
-    CIRCLE_MIN_RADIUS_MEAN = 20     # 10 -> 20 (적당한 크기)
-    CIRCLE_MAX_RADIUS_MEAN = 200    # 새로 추가 (너무 큰 원 제외)
-    CIRCLE_MIN_TOTAL_ANGLE = np.pi * 1.2  # 1.5π -> 1.2π (216도로 완화)
-
-    # 스무딩 설정 (명시적으로 사용되진 않으나 향후 확장 가능)
+    # 제스처 임계값 - 모두 완화
+    FLICK_SPEED_THRESHOLD = 300     # 더 느린 움직임도 인식
+    FIST_ANGLE_THRESHOLD = 100      # 덜 굽혀도 인식
+    PALM_EXTEND_THRESHOLD = 140     # 덜 펴도 인식
+    CIRCLE_STD_THRESHOLD = 50       
+    CIRCLE_MIN_POINTS = 10          
+    CIRCLE_MIN_RADIUS_MEAN = 15     
+    CIRCLE_MIN_TOTAL_ANGLE = np.pi  # 180도만 그려도 인식
+    
+    # 기본 안정화 설정 (추가됨!)
+    DEFAULT_STABILITY_WINDOW = 0.3      # 제스처 유지 시간
+    DEFAULT_CONFIDENCE_THRESHOLD = 0.8   # 최소 신뢰도
+    DEFAULT_COOLDOWN_TIME = 0.5         # 재사용 대기 시간
+    
+    # 스무딩 설정
     SMOOTHING_BUFFER_SIZE = 3
     FPS_BUFFER_SIZE = 30
-
-    # 기본 안정화 장치 설정 (필요시 오버라이드 가능)
-    DEFAULT_STABILITY_WINDOW = 0.3    # 초 (제스처 유지 시간)
-    DEFAULT_CONFIDENCE_THRESHOLD = 0.8  # 최소 신뢰도
-    DEFAULT_COOLDOWN_TIME = 0.5       # 초 (동일 제스처 재사용 대기 시간)
 
 
 class GestureValidator:
@@ -69,8 +70,8 @@ class GestureValidator:
     def __init__(self, min_confidence=0.7, cooldown_time=0.3):
         self.min_confidence = min_confidence
         self.cooldown_time = cooldown_time
-        self.last_gesture_time = {} # 손별, 제스처별 마지막 인식 시간
-        self.gesture_history = deque(maxlen=10) # 최근 제스처 기록 (디버깅용)
+        self.last_gesture_time = {}
+        self.gesture_history = deque(maxlen=10)
     
     def validate(self, gesture_type, confidence, hand_label):
         """제스처 유효성 검증"""
@@ -96,6 +97,7 @@ class GestureValidator:
         })
         return True
 
+
 class NinjaGestureRecognizer:
     """닌자 게임 제스처 인식기"""
     
@@ -106,36 +108,75 @@ class NinjaGestureRecognizer:
             osc_port or Config.OSC_PORT
         )
 
-        # 안정화 모듈 설정
-        actual_stabilizer_settings = stabilizer_settings or {}
+        # 안정화 모듈 설정 - 수정된 부분
+        if stabilizer_settings is None:
+            stabilizer_settings = {}
+        
         try:
-            # gesture_stabilizer.py 파일 내에 GestureStabilizer 클래스가 있다고 가정
             self.stabilizer = gesture_stabilizer.GestureStabilizer(
-                stability_window=actual_stabilizer_settings.get('stability_window', Config.DEFAULT_STABILITY_WINDOW),
-                confidence_threshold=actual_stabilizer_settings.get('confidence_threshold', Config.DEFAULT_CONFIDENCE_THRESHOLD),
-                cooldown_time=actual_stabilizer_settings.get('cooldown_time', Config.DEFAULT_COOLDOWN_TIME)
+                stability_window=stabilizer_settings.get('stability_window', Config.DEFAULT_STABILITY_WINDOW),
+                confidence_threshold=stabilizer_settings.get('confidence_threshold', Config.DEFAULT_CONFIDENCE_THRESHOLD),
+                cooldown_time=stabilizer_settings.get('cooldown_time', Config.DEFAULT_COOLDOWN_TIME)
             )
-            logger.info("GestureStabilizer initialized successfully.")
-        except AttributeError as e:
-            logger.error(f"Failed to initialize GestureStabilizer from gesture_stabilizer module: {e}. Ensure 'gesture_stabilizer.py' contains 'GestureStabilizer' class.")
-            # 안정화 장치 초기화 실패 시 더미(dummy) 안정화 장치 사용 또는 에러 발생 처리
-            class DummyStabilizer: # API 호환성을 위한 최소한의 더미 클래스
-                def __init__(self, *args, **kwargs): self.stability_window = kwargs.get('stability_window', 0.3)
-                def should_send_gesture(self, gesture_type, confidence, hand_label): return True, {"confidence": confidence} # 항상 통과
-                def get_statistics(self): return {"current_gesture": "none", "stability_progress": 0}
-                def reset_if_idle(self): pass
-            self.stabilizer = DummyStabilizer()
-            logger.warning("Using a DUMMY stabilizer due to an initialization error with GestureStabilizer.")
-        except Exception as e_stab:
-            logger.error(f"An unexpected error occurred while initializing GestureStabilizer: {e_stab}")
-            #  위와 동일한 더미 사용
-            class DummyStabilizer:
-                def __init__(self, *args, **kwargs): self.stability_window = kwargs.get('stability_window', 0.3)
-                def should_send_gesture(self, gesture_type, confidence, hand_label): return True, {"confidence": confidence}
-                def get_statistics(self): return {"current_gesture": "none", "stability_progress": 0}
-                def reset_if_idle(self): pass
-            self.stabilizer = DummyStabilizer()
-            logger.warning("Using a DUMMY stabilizer due to an unexpected initialization error.")
+            logger.info(f"GestureStabilizer initialized: window={self.stabilizer.stability_window}s, "
+                       f"threshold={self.stabilizer.confidence_threshold}, "
+                       f"cooldown={self.stabilizer.cooldown_time}s")
+        except Exception as e:
+            logger.error(f"Failed to initialize GestureStabilizer: {e}")
+            # 간단한 대체 안정화 클래스
+            class SimpleStabilizer:
+                def __init__(self, **kwargs):
+                    self.stability_window = kwargs.get('stability_window', 0.3)
+                    self.confidence_threshold = kwargs.get('confidence_threshold', 0.8)
+                    self.cooldown_time = kwargs.get('cooldown_time', 0.5)
+                    self.last_gesture_time = {}
+                    self.current_gesture = "none"
+                    self.current_gesture_start = 0
+                
+                def should_send_gesture(self, gesture_type, confidence, hand_label):
+                    current_time = time.time()
+                    
+                    # None 제스처는 무시
+                    if gesture_type == "none":
+                        self.current_gesture = "none"
+                        return False, None
+                    
+                    # 신뢰도 체크
+                    if confidence < self.confidence_threshold:
+                        return False, None
+                    
+                    # 새로운 제스처 시작
+                    if gesture_type != self.current_gesture:
+                        self.current_gesture = gesture_type
+                        self.current_gesture_start = current_time
+                        return False, None
+                    
+                    # 안정화 시간 체크
+                    if current_time - self.current_gesture_start < self.stability_window:
+                        return False, None
+                    
+                    # 쿨다운 체크
+                    gesture_key = f"{gesture_type}_{hand_label}"
+                    if gesture_key in self.last_gesture_time:
+                        if current_time - self.last_gesture_time[gesture_key] < self.cooldown_time:
+                            return False, None
+                    
+                    # 제스처 전송
+                    self.last_gesture_time[gesture_key] = current_time
+                    return True, {"confidence": confidence}
+                
+                def get_statistics(self):
+                    return {
+                        "current_gesture": self.current_gesture,
+                        "stability_progress": time.time() - self.current_gesture_start if self.current_gesture != "none" else 0
+                    }
+                
+                def reset_if_idle(self):
+                    self.current_gesture = "none"
+                    self.current_gesture_start = 0
+            
+            self.stabilizer = SimpleStabilizer(**stabilizer_settings)
+            logger.warning("Using SimpleStabilizer as fallback")
 
         # MediaPipe 초기화
         self.mp_hands = mp.solutions.hands
@@ -154,19 +195,19 @@ class NinjaGestureRecognizer:
         self.INDEX_TIP = 8
         self.MIDDLE_TIP = 12
         self.RING_TIP = 16
-        self.PINKY_TIP = 20  # PINKY_TIP은 여기에 정의되어 있습니다.
-                             # "pinky 손가락 인덱스도 정의되어 있지 않아"라는 문제가 이 변수를 지칭한다면,
-                             # 해당 변수는 정상적으로 정의되어 있습니다.
-                             # 만약 다른 pinky 관련 랜드마크(예: MCP, PIP, DIP)가 필요하다면 별도 추가가 필요합니다.
+        self.PINKY_TIP = 20
         
-        # 제스처 유효성 검증기 (주로 쿨다운 관리)
-        self.validator = GestureValidator()
+        # 제스처 유효성 검증기
+        self.validator = GestureValidator(
+            min_confidence=0.5,  # 더 낮은 신뢰도 허용
+            cooldown_time=0.2    # 더 짧은 쿨다운
+        )
         
         # 상태 추적용 변수
-        self.prev_landmarks = {"Left": None, "Right": None} # 이전 프레임의 손 랜드마크 (플릭 감지용)
-        self.prev_time = time.time() # 이전 프레임 처리 시간 (dt 계산용)
-        self.position_history = {"Left": deque(maxlen=5), "Right": deque(maxlen=5)} # 손 위치 기록 (스무딩 등에 활용 가능)
-        self.circle_points = {"Left": deque(maxlen=20), "Right": deque(maxlen=20)} # 원 그리기 판정용 포인트 기록
+        self.prev_landmarks = {"Left": None, "Right": None}
+        self.prev_time = time.time()
+        self.position_history = {"Left": deque(maxlen=5), "Right": deque(maxlen=5)}
+        self.circle_points = {"Left": deque(maxlen=20), "Right": deque(maxlen=20)}
 
         logger.info(f"Ninja Gesture Recognizer initialized - OSC: {osc_ip or Config.OSC_IP}:{osc_port or Config.OSC_PORT}")
 
@@ -182,202 +223,199 @@ class NinjaGestureRecognizer:
         norm_v1 = np.linalg.norm(v1)
         norm_v2 = np.linalg.norm(v2)
         
-        if norm_v1 == 0 or norm_v2 == 0: # 벡터 길이가 0이면 각도 계산 불가
+        if norm_v1 == 0 or norm_v2 == 0:
             return 0.0 
 
         cosine_angle = np.dot(v1, v2) / (norm_v1 * norm_v2)
-        angle = np.arccos(np.clip(cosine_angle, -1.0, 1.0)) # clip으로 값 범위 보정
+        angle = np.arccos(np.clip(cosine_angle, -1.0, 1.0))
         return np.degrees(angle)
 
     def calculate_finger_angles(self, landmarks):
-        """손가락 굴곡 각도 계산 (주로 PIP 관절 기준)"""
+        """손가락 굴곡 각도 계산"""
         angles = {}
-        # 각 손가락의 관절 인덱스 (MCP, PIP, DIP, TIP 순서이나, 각도 계산에는 주로 MCP-PIP-DIP 또는 PIP-DIP-TIP 사용)
         finger_joints_indices = {
-            'thumb': [1, 2, 3, 4],   # 엄지는 구조가 다름 (CMC, MCP, IP, TIP)
-            'index': [5, 6, 7, 8],   # 검지 (MCP, PIP, DIP, TIP)
-            'middle': [9, 10, 11, 12], # 중지
-            'ring': [13, 14, 15, 16],  # 약지
-            'pinky': [17, 18, 19, 20]  # 새끼손가락
+            'thumb': [1, 2, 3, 4],
+            'index': [5, 6, 7, 8],
+            'middle': [9, 10, 11, 12],
+            'ring': [13, 14, 15, 16],
+            'pinky': [17, 18, 19, 20]
         }
         
         for finger, joints in finger_joints_indices.items():
-            # 보통 손가락 굽힘은 PIP 관절(두 번째 관절)을 기준으로 측정
-            # landmarks[joints[1]] (PIP)가 꼭지점이 되도록 p1, p2, p3 설정
-            p1 = np.array([landmarks[joints[0]].x, landmarks[joints[0]].y]) # MCP
-            p2 = np.array([landmarks[joints[1]].x, landmarks[joints[1]].y]) # PIP
-            p3 = np.array([landmarks[joints[2]].x, landmarks[joints[2]].y]) # DIP
+            p1 = np.array([landmarks[joints[0]].x, landmarks[joints[0]].y])
+            p2 = np.array([landmarks[joints[1]].x, landmarks[joints[1]].y])
+            p3 = np.array([landmarks[joints[2]].x, landmarks[joints[2]].y])
             
             angles[finger] = self.calculate_angle(p1, p2, p3)
         return angles
 
     def detect_fist(self, landmarks):
-        """주먹 쥐기 감지"""
+        """주먹 쥐기 감지 - 개선 버전"""
         angles = self.calculate_finger_angles(landmarks)
-        closed_fingers = 0
-        # 엄지를 제외한 네 손가락이 충분히 굽혀졌는지 확인
-        for finger in ['index', 'middle', 'ring', 'pinky']:
-            if finger in angles and angles[finger] < Config.FIST_ANGLE_THRESHOLD:
-                closed_fingers += 1
         
-        # 보통 4개 손가락 모두 닫혀야 주먹으로 간주하나, 여기서는 3개 이상으로 설정됨
-        is_fist = closed_fingers >= 3 
-        confidence = closed_fingers / 4.0 # 0.0 ~ 1.0 사이의 신뢰도
-        return is_fist, confidence
+        # 각 손가락의 굽힘 정도를 점수화
+        finger_scores = []
+        for finger in ['index', 'middle', 'ring', 'pinky']:
+            if finger in angles:
+                # 각도가 작을수록 (더 굽혀질수록) 높은 점수
+                score = max(0, (Config.FIST_ANGLE_THRESHOLD - angles[finger]) / Config.FIST_ANGLE_THRESHOLD)
+                finger_scores.append(score)
+        
+        if len(finger_scores) >= 3:  # 최소 3개 손가락 데이터가 있어야 함
+            avg_score = sum(finger_scores) / len(finger_scores)
+            
+            # 평균 점수가 0.5 이상이면 주먹으로 인식
+            is_fist = avg_score > 0.5
+            confidence = min(avg_score + 0.3, 1.0)  # 신뢰도 부스트
+            
+            return is_fist, confidence
+        
+        return False, 0.0
 
     def detect_flick(self, current_landmarks, hand_label, img_width, img_height):
-        """손가락 튕기기(플릭) 감지 (주로 검지)"""
+        """손가락 튕기기 감지 - 개선 버전"""
         if self.prev_landmarks[hand_label] is None:
-            return False, None, 0.0 # 이전 랜드마크 없음
-
-        current_time = time.time()
-        dt = current_time - self.prev_time # 이전 프레임과의 시간 간격
-        if dt == 0:
             return False, None, 0.0
-
-        # 검지 끝(INDEX_TIP)의 현재 위치와 이전 위치
-        curr_index_tip_lm = current_landmarks[self.INDEX_TIP]
-        prev_index_tip_lm = self.prev_landmarks[hand_label][self.INDEX_TIP]
         
-        # 이미지 좌표계로 변환 (x, y)
-        curr_pos = np.array([curr_index_tip_lm.x * img_width, curr_index_tip_lm.y * img_height])
-        prev_pos = np.array([prev_index_tip_lm.x * img_width, prev_index_tip_lm.y * img_height])
+        current_time = time.time()
+        dt = current_time - self.prev_time
+        if dt == 0 or dt > 0.5:  # 0.5초 이상 차이나면 무시
+            return False, None, 0.0
         
-        distance = self.calculate_distance(curr_pos, prev_pos)
-        velocity = distance / dt # 속도 (pixels/sec)
-
-        if velocity > Config.FLICK_SPEED_THRESHOLD:
-            direction_vector = curr_pos - prev_pos
-            norm_direction = np.linalg.norm(direction_vector)
-            if norm_direction == 0: # 위치 변화가 없으면 방향 없음
-                return False, None, 0.0
+        # 검지와 중지 둘 다 체크 (더 유연한 인식)
+        for finger_tip in [self.INDEX_TIP, self.MIDDLE_TIP]:
+            curr_tip = current_landmarks[finger_tip]
+            prev_tip = self.prev_landmarks[hand_label][finger_tip]
             
-            direction_normalized = direction_vector / norm_direction
+            curr_pos = np.array([curr_tip.x * img_width, curr_tip.y * img_height])
+            prev_pos = np.array([prev_tip.x * img_width, prev_tip.y * img_height])
             
-            # 플릭 시 검지가 펴져 있는지 확인
-            finger_angles = self.calculate_finger_angles(current_landmarks)
-            if 'index' in finger_angles and finger_angles['index'] > 120: # 120도 이상 펴져있음
-                return True, direction_normalized.tolist(), velocity
+            distance = self.calculate_distance(curr_pos, prev_pos)
+            velocity = distance / dt
+            
+            if velocity > Config.FLICK_SPEED_THRESHOLD:
+                direction_vector = curr_pos - prev_pos
+                norm_direction = np.linalg.norm(direction_vector)
+                
+                if norm_direction > 0:
+                    direction_normalized = direction_vector / norm_direction
+                    
+                    # 손가락이 어느 정도만 펴져 있어도 인식
+                    finger_angles = self.calculate_finger_angles(current_landmarks)
+                    finger_name = 'index' if finger_tip == self.INDEX_TIP else 'middle'
+                    
+                    if finger_name in finger_angles and finger_angles[finger_name] > 100:  # 120 → 100
+                        # 속도에 따른 신뢰도 계산
+                        confidence = min(0.7 + (velocity - Config.FLICK_SPEED_THRESHOLD) / 1000, 1.0)
+                        return True, direction_normalized.tolist(), velocity
         
         return False, None, 0.0
 
-    def detect_palm_push(self, landmarks, hand_label): # hand_label은 현재 미사용
-        """손바닥 밀기 감지"""
+    def detect_palm_push(self, landmarks, hand_label):
+        """손바닥 밀기 감지 - 개선 버전"""
         finger_angles = self.calculate_finger_angles(landmarks)
-        extended_fingers = 0
-        # 엄지를 제외한 네 손가락이 펴져 있는지 확인
-        for finger in ['index', 'middle', 'ring', 'pinky']:
-            if finger in finger_angles and finger_angles[finger] > Config.PALM_EXTEND_THRESHOLD:
-                extended_fingers += 1
         
-        # 3개 이상 손가락이 펴져 있고 (보통 4개), 손바닥이 카메라 쪽으로 향하는 움직임 감지
-        if extended_fingers >= 3:
-            # 손목(WRIST)과 손바닥 중심(MIDDLE_FINGER_MCP, landmark 9)의 z값 차이로 밀기 감지 시도
-            # 이 방식은 손의 기울기에 매우 민감할 수 있음
-            palm_center_lm = landmarks[self.MIDDLE_TIP - 3] # MIDDLE_FINGER_MCP (landmark 9)
-            wrist_lm = landmarks[self.WRIST]
+        # 각 손가락의 펴짐 정도 점수화
+        extended_score = 0
+        finger_count = 0
+        
+        for finger in ['index', 'middle', 'ring', 'pinky']:
+            if finger in finger_angles:
+                # 각도가 클수록 (더 펴질수록) 높은 점수
+                score = max(0, (finger_angles[finger] - 100) / 80)  # 100도 이상부터 점수
+                extended_score += score
+                finger_count += 1
+        
+        if finger_count >= 3:
+            avg_extended = extended_score / finger_count
             
-            # z값은 카메라로부터의 거리를 나타내며, 값이 작을수록 카메라에 가까움
-            # 미는 동작은 손바닥이 손목보다 카메라에 더 가까워지는(z값이 작아지는) 경향
-            z_diff = wrist_lm.z - palm_center_lm.z # 양수면 손바닥이 더 가까움
-            
-            # 특정 임계값 이상으로 z 차이가 나면 푸시로 간주 (0.05는 실험적으로 조정 필요)
-            if z_diff > 0.05: 
-                confidence = min(z_diff * 10, 1.0) # z_diff가 클수록 신뢰도 높게 (최대 1.0)
-                return True, confidence
+            # 평균 점수가 0.5 이상이면 손바닥이 펴진 것으로 판단
+            if avg_extended > 0.5:
+                # z축 차이로 밀기 동작 감지
+                palm_center = landmarks[9]  # 중지 MCP
+                wrist = landmarks[self.WRIST]
+                
+                # z값 차이 (음수일수록 손바닥이 카메라 쪽으로 향함)
+                z_diff = palm_center.z - wrist.z
+                
+                # 손목 각도도 고려 (손목이 펴져있는지)
+                wrist_angle = self.calculate_angle(
+                    [landmarks[0].x, landmarks[0].y],  # 손목
+                    [landmarks[5].x, landmarks[5].y],  # 검지 MCP
+                    [landmarks[17].x, landmarks[17].y]  # 새끼 MCP
+                )
+                
+                # z축 차이가 작거나 손목이 펴져있으면 푸시로 인식
+                if z_diff < -0.02 or wrist_angle > 150:
+                    confidence = min(0.7 + avg_extended * 0.3, 1.0)
+                    return True, confidence
         
         return False, 0.0
 
     def detect_circle(self, landmarks, hand_label, img_width, img_height):
-        """원 그리기 감지 (검지 끝 사용) - 개선된 버전"""
-        index_tip_lm = landmarks[self.INDEX_TIP]
-        current_pos = np.array([index_tip_lm.x * img_width, index_tip_lm.y * img_height])
+        """원 그리기 감지 - 개선 버전"""
+        # 검지 또는 손 전체 중심점 사용
+        index_tip = landmarks[self.INDEX_TIP]
         
-        # 포인트가 너무 가까우면 추가하지 않음 (노이즈 감소)
+        # 손바닥 중심점도 계산 (더 안정적인 추적)
+        palm_center_x = (landmarks[0].x + landmarks[5].x + landmarks[17].x) / 3
+        palm_center_y = (landmarks[0].y + landmarks[5].y + landmarks[17].y) / 3
+        
+        # 검지가 충분히 펴져있을 때는 검지 사용, 아니면 손바닥 중심 사용
+        finger_angles = self.calculate_finger_angles(landmarks)
+        if 'index' in finger_angles and finger_angles['index'] > 120:
+            current_pos = np.array([index_tip.x * img_width, index_tip.y * img_height])
+        else:
+            current_pos = np.array([palm_center_x * img_width, palm_center_y * img_height])
+        
+        # 너무 가까운 포인트는 스킵
         if len(self.circle_points[hand_label]) > 0:
             last_pos = self.circle_points[hand_label][-1]
-            if self.calculate_distance(current_pos, last_pos) < 5:  # 5픽셀 미만이면 스킵
+            if self.calculate_distance(current_pos, last_pos) < 3:
                 return False, None
         
         self.circle_points[hand_label].append(current_pos)
         
-        # 포인트 수 조건 완화 (15 -> 12)
-        if len(self.circle_points[hand_label]) >= 12:
+        # 충분한 포인트가 모였을 때 분석
+        if len(self.circle_points[hand_label]) >= Config.CIRCLE_MIN_POINTS:
             points = np.array(self.circle_points[hand_label])
             
-            # 시작점과 끝점의 거리 확인 (원이 닫혔는지)
+            # 간단한 원 판정: 시작점으로 돌아왔는지 확인
             start_point = points[0]
-            end_point = points[-1]
-            closing_distance = self.calculate_distance(start_point, end_point)
+            current_point = points[-1]
             
-            # 전체 경로 길이 계산
-            total_path_length = 0
-            for i in range(1, len(points)):
-                total_path_length += self.calculate_distance(points[i-1], points[i])
-            
-            # 중심점과 평균 반지름 계산
+            # 중심점 계산
             center = np.mean(points, axis=0)
-            distances_from_center = np.linalg.norm(points - center, axis=1)
-            mean_radius = np.mean(distances_from_center)
-            std_dev_radius = np.std(distances_from_center)
             
-            # 원형도 계산 (0~1, 1에 가까울수록 완벽한 원)
-            if mean_radius > 0:
-                circularity = 1 - (std_dev_radius / mean_radius)
-            else:
-                circularity = 0
+            # 평균 반지름
+            distances = np.linalg.norm(points - center, axis=1)
+            mean_radius = np.mean(distances)
             
-            # 조건 완화
-            # 1. 표준편차 조건 완화 (30 -> 40)
-            # 2. 최소 반지름 조건 완화 (10 -> 20)
-            # 3. 원형도 추가 (0.6 이상이면 원으로 간주)
-            is_circular = (
-                (std_dev_radius < 40 or circularity > 0.6) and 
-                mean_radius > 20 and
-                mean_radius < 200  # 너무 큰 원 제외
-            )
+            # 시작점과 현재점의 거리
+            closing_distance = self.calculate_distance(start_point, current_point)
             
-            # 닫힌 경로인지 확인 (시작점과 끝점이 가까운지)
-            is_closed = closing_distance < mean_radius * 0.5  # 반지름의 50% 이내
-            
-            if is_circular and (is_closed or len(points) >= 18):
-                # 방향 판정 개선
+            # 조건: 충분히 돌았고 시작점 근처로 돌아왔으면 원으로 인식
+            if mean_radius > Config.CIRCLE_MIN_RADIUS_MEAN:
+                # 각도 변화 계산 (간단히)
                 total_angle = 0
-                valid_segments = 0
+                for i in range(1, len(points)):
+                    v1 = points[i-1] - center
+                    v2 = points[i] - center
+                    angle = np.arctan2(v2[1], v2[0]) - np.arctan2(v1[1], v1[0])
+                    if angle > np.pi: angle -= 2*np.pi
+                    if angle < -np.pi: angle += 2*np.pi
+                    total_angle += angle
                 
-                for i in range(len(points) - 1):
-                    p_curr = points[i] - center
-                    p_next = points[i + 1] - center
-                    
-                    # 각도 계산
-                    angle_curr = np.arctan2(p_curr[1], p_curr[0])
-                    angle_next = np.arctan2(p_next[1], p_next[0])
-                    angle_diff = angle_next - angle_curr
-                    
-                    # -pi ~ pi 범위로 정규화
-                    if angle_diff > np.pi:
-                        angle_diff -= 2 * np.pi
-                    elif angle_diff < -np.pi:
-                        angle_diff += 2 * np.pi
-                    
-                    # 너무 큰 각도 변화는 노이즈로 간주
-                    if abs(angle_diff) < np.pi / 2:  # 90도 미만
-                        total_angle += angle_diff
-                        valid_segments += 1
-                
-                # 유효한 세그먼트가 충분히 있고, 총 각도가 충분하면 원으로 판정
-                if valid_segments >= 6 and abs(total_angle) > np.pi * 1.2:  # 216도 이상 (1.5π -> 1.2π)
-                    direction = "ccw" if total_angle > 0 else "cw"
-                    self.circle_points[hand_label].clear()
-                    
-                    # 디버그 출력 (선택사항)
-                    logger.debug(f"Circle detected: radius={mean_radius:.1f}, circularity={circularity:.2f}, angle={np.degrees(total_angle):.0f}°")
-                    
-                    return True, direction
+                # 180도 이상 돌았으면 원으로 인식
+                if abs(total_angle) > Config.CIRCLE_MIN_TOTAL_ANGLE:
+                    # 시작점 근처로 돌아왔거나 충분히 많은 포인트가 있으면
+                    if closing_distance < mean_radius or len(points) > 15:
+                        direction = "ccw" if total_angle > 0 else "cw"
+                        self.circle_points[hand_label].clear()
+                        return True, direction
             
-            # 포인트가 너무 많이 쌓이면 오래된 것부터 제거
-            if len(self.circle_points[hand_label]) > 25:
-                # 앞쪽 5개 제거
+            # 포인트가 너무 많으면 오래된 것 제거
+            if len(self.circle_points[hand_label]) > 20:
                 for _ in range(5):
                     self.circle_points[hand_label].popleft()
         
@@ -385,18 +423,17 @@ class NinjaGestureRecognizer:
 
     def recognize_gesture(self, hand_landmarks_obj, hand_label, img_shape):
         """단일 손에 대한 통합 제스처 인식"""
-        landmarks = hand_landmarks_obj.landmark # MediaPipe Landmark list
+        landmarks = hand_landmarks_obj.landmark
         height, width = img_shape[:2]
         
         current_gesture = GestureType.NONE
-        gesture_data = {"confidence": 0.0} # 기본 신뢰도
+        gesture_data = {"confidence": 0.0}
 
-        # 제스처 감지 순서 (우선순위 고려 필요)
+        # 제스처 감지 순서 (우선순위 고려)
         # 1. 플릭 (빠른 움직임이므로 우선 감지)
         is_flick, flick_dir, flick_speed = self.detect_flick(landmarks, hand_label, width, height)
         if is_flick:
             current_gesture = GestureType.FLICK
-            # 플릭은 명확한 움직임이므로 신뢰도를 높게 설정 가능
             gesture_data = {"direction": flick_dir, "speed": flick_speed, "confidence": 0.9}
         else:
             # 2. 주먹 (플릭이 아닐 경우)
@@ -412,17 +449,13 @@ class NinjaGestureRecognizer:
                     gesture_data = {"confidence": push_conf}
         
         # 4. 원 그리기 (다른 제스처와 동시에 발생 가능성 고려)
-        # 현재 로직은 원이 감지되면 이전 제스처를 덮어씀.
-        # 만약 원 제스처가 다른 제스처와 독립적이거나 우선순위가 낮다면,
-        # `if current_gesture == GestureType.NONE and is_circle:` 와 같이 조건 추가 가능
         is_circle, circle_dir = self.detect_circle(landmarks, hand_label, width, height)
         if is_circle:
             current_gesture = GestureType.CIRCLE
-            # 원 그리기는 비교적 명확하므로 신뢰도를 적절히 설정
-            gesture_data = {"direction": circle_dir, "confidence": 0.85} 
+            gesture_data = {"direction": circle_dir, "confidence": 0.85}
 
         # 다음 프레임의 플릭 감지를 위해 현재 랜드마크 저장
-        self.prev_landmarks[hand_label] = landmarks 
+        self.prev_landmarks[hand_label] = landmarks
         return current_gesture, gesture_data
 
     def send_gesture_osc(self, gesture_type_enum, gesture_data, hand_label):
@@ -431,9 +464,8 @@ class NinjaGestureRecognizer:
             confidence = gesture_data.get("confidence", 0.0)
             gesture_type_str = gesture_type_enum.value
 
-            # 제스처 유효성 검증 (쿨다운 등) - 안정화 장치 통과 후 추가 검증
+            # 제스처 유효성 검증 (쿨다운 등)
             if not self.validator.validate(gesture_type_str, confidence, hand_label):
-                # logger.debug(f"Gesture {gesture_type_str} for {hand_label} failed validation (cooldown).")
                 return
 
             bundle_builder = osc_bundle_builder.OscBundleBuilder(osc_bundle_builder.IMMEDIATELY)
@@ -452,10 +484,10 @@ class NinjaGestureRecognizer:
             if "direction" in gesture_data:
                 msg_builder = osc_message_builder.OscMessageBuilder(address="/ninja/gesture/direction")
                 direction_val = gesture_data["direction"]
-                if isinstance(direction_val, list) and len(direction_val) == 2: # 플릭 (x, y 벡터)
+                if isinstance(direction_val, list) and len(direction_val) == 2:
                     msg_builder.add_arg(float(direction_val[0]))
                     msg_builder.add_arg(float(direction_val[1]))
-                else: # 원 (문자열 "cw" 또는 "ccw")
+                else:
                     msg_builder.add_arg(str(direction_val))
                 bundle_builder.add_content(msg_builder.build())
 
@@ -467,7 +499,7 @@ class NinjaGestureRecognizer:
             
             # 손 구분 메시지
             msg_builder = osc_message_builder.OscMessageBuilder(address="/ninja/gesture/hand")
-            msg_builder.add_arg(hand_label) # "Left" or "Right"
+            msg_builder.add_arg(hand_label)
             bundle_builder.add_content(msg_builder.build())
             
             # 번들 전송
@@ -487,8 +519,8 @@ class NinjaGestureRecognizer:
 
     def process_frame(self, frame_input):
         """단일 프레임 처리 및 제스처 인식 후 결과 반환"""
-        frame_to_draw_on = frame_input.copy() # 원본 프레임 수정을 피하기 위해 복사본 사용
-        debug_messages_for_frame = [] # 현재 프레임의 디버그 메시지 리스트
+        frame_to_draw_on = frame_input.copy()
+        debug_messages_for_frame = []
 
         try:
             # BGR -> RGB 변환 및 MediaPipe 처리
@@ -498,7 +530,7 @@ class NinjaGestureRecognizer:
             if results.multi_hand_landmarks:
                 for hand_idx, hand_landmarks_obj in enumerate(results.multi_hand_landmarks):
                     handedness_obj = results.multi_handedness[hand_idx]
-                    hand_label = handedness_obj.classification[0].label # "Left" or "Right"
+                    hand_label = handedness_obj.classification[0].label
                     
                     # 손 랜드마크 그리기
                     self.mp_drawing.draw_landmarks(
@@ -511,36 +543,30 @@ class NinjaGestureRecognizer:
                     )
                     
                     # 안정화 필터 적용
-                    # GestureStabilizer.should_send_gesture 는 (bool, dict) 를 반환한다고 가정
                     should_send, stabilized_gesture_data = self.stabilizer.should_send_gesture(
-                        raw_gesture_type.value, # 제스처 타입 문자열 전달
+                        raw_gesture_type.value,
                         raw_gesture_data.get("confidence", 0.0),
                         hand_label
                     )
                     
                     if should_send and raw_gesture_type != GestureType.NONE:
-                        # OSC 전송 (안정화된 제스처 정보 사용)
-                        # stabilized_gesture_data가 OSC 전송에 필요한 모든 정보를 포함해야 함
-                        # 여기서는 원본 raw_gesture_data를 사용 (필요시 stabilized_gesture_data 활용)
+                        # OSC 전송
                         self.send_gesture_osc(raw_gesture_type, raw_gesture_data, hand_label)
-                        debug_messages_for_frame.append(f"{hand_label}: {raw_gesture_type.value} \u2713 (Sent)")
+                        debug_messages_for_frame.append(f"{hand_label}: {raw_gesture_type.value} ✓ (Sent)")
                     else:
                         # 안정화 대기 중인 제스처 정보 표시
                         stabilizer_stats = self.stabilizer.get_statistics()
-                        # gesture_stabilizer.py의 get_statistics() 반환 형식에 맞춰야 함
                         pending_gesture = stabilizer_stats.get("current_gesture", "none")
                         
                         if pending_gesture != "none" and pending_gesture == raw_gesture_type.value:
                             stability_progress = stabilizer_stats.get("stability_progress", 0)
-                            # 안정화 창 지속 시간 (GestureStabilizer 인스턴스에서 가져오거나 Config 사용)
                             window_duration = getattr(self.stabilizer, 'stability_window', Config.DEFAULT_STABILITY_WINDOW)
                             progress_percent = min(stability_progress / window_duration if window_duration > 0 else 0, 1.0) * 100
                             debug_messages_for_frame.append(f"{hand_label}: {pending_gesture} ({progress_percent:.0f}%)")
                         elif raw_gesture_type != GestureType.NONE:
-                            # 안정화 필터에 걸렸지만 아직 대기 상태는 아닌 경우 (예: 너무 짧게 유지)
                             debug_messages_for_frame.append(f"{hand_label}: {raw_gesture_type.value} (Raw)")
             else:
-                # 손이 감지되지 않으면 안정화 장치 리셋 (필요시)
+                # 손이 감지되지 않으면 안정화 장치 리셋
                 self.stabilizer.reset_if_idle()
 
             # 손 감지 상태 OSC 전송
@@ -553,7 +579,7 @@ class NinjaGestureRecognizer:
             traceback.print_exc()
             debug_messages_for_frame.append(f"Error processing: {e}")
 
-        self.prev_time = time.time() # 현재 프레임 처리 시간 기록
+        self.prev_time = time.time()
         return frame_to_draw_on, debug_messages_for_frame
 
     def cleanup(self):
@@ -567,7 +593,7 @@ class NinjaMasterHandTracker:
     """닌자 마스터 메인 트래커"""
     
     def __init__(self, osc_ip=None, osc_port=None, stabilizer_settings_override=None):
-        # 제스처 인식기 초기화 (안정화 장치 설정 전달)
+        # 제스처 인식기 초기화
         self.gesture_recognizer = NinjaGestureRecognizer(
             osc_ip=osc_ip,
             osc_port=osc_port,
@@ -575,20 +601,20 @@ class NinjaMasterHandTracker:
         )
         
         # 웹캠 설정
-        self.cap = cv2.VideoCapture(0) # 0번 카메라 사용 (필요시 변경)
+        self.cap = cv2.VideoCapture(0)
         if not self.cap.isOpened():
             error_msg = "웹캠을 열 수 없습니다. 카메라 연결 상태 및 권한을 확인하세요."
             logger.error(error_msg)
-            raise IOError(error_msg) # 프로그램 중단을 위해 IOError 발생
+            raise IOError(error_msg)
 
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, Config.CAMERA_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, Config.CAMERA_HEIGHT)
         self.cap.set(cv2.CAP_PROP_FPS, Config.CAMERA_FPS)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, Config.CAMERA_BUFFER_SIZE) # 버퍼 크기 줄여 지연 감소 시도
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, Config.CAMERA_BUFFER_SIZE)
         
         # FPS 계산용 변수
         self.fps_counter = deque(maxlen=Config.FPS_BUFFER_SIZE)
-        self.last_time = time.time() # FPS 계산 위한 이전 시간 초기화
+        self.last_time = time.time()
         
         # 디버그 모드
         self.debug_mode = True
@@ -599,16 +625,16 @@ class NinjaMasterHandTracker:
         current_time = time.time()
         time_difference = current_time - self.last_time
         
-        if time_difference > 0: # 0으로 나누기 방지
+        if time_difference > 0:
             fps = 1.0 / time_difference
             self.fps_counter.append(fps)
         
-        self.last_time = current_time # 현재 시간을 다음 계산을 위해 저장
+        self.last_time = current_time
         
         return np.mean(self.fps_counter) if len(self.fps_counter) > 0 else 0.0
 
     def draw_debug_info(self, frame, fps, debug_messages_list):
-        """디버그 정보(FPS, 제스처 상태 등)를 프레임에 그리기"""
+        """디버그 정보를 프레임에 그리기"""
         # FPS 표시
         cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), 
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
@@ -642,11 +668,10 @@ class NinjaMasterHandTracker:
                 current_frame_flipped = cv2.flip(frame_from_camera, 1)
                 
                 # 현재 프레임에 대한 출력 변수 초기화
-                # process_frame에서 오류 발생 시 이 기본값을 사용하게 됨
-                processed_display_frame = current_frame_flipped 
-                current_debug_messages = [] 
+                processed_display_frame = current_frame_flipped
+                current_debug_messages = []
                 
-                # 제스처 인식 처리 (오류는 process_frame 내부에서 로깅)
+                # 제스처 인식 처리
                 processed_display_frame, current_debug_messages = self.gesture_recognizer.process_frame(current_frame_flipped)
                 
                 # FPS 계산
@@ -660,11 +685,11 @@ class NinjaMasterHandTracker:
                 cv2.imshow("Ninja Master", processed_display_frame)
                 
                 # 키 입력 처리
-                key = cv2.waitKey(1) & 0xFF # 1ms 대기, 키 입력 없으면 -1 반환
-                if key == ord('q'): # 'q' 입력 시 종료
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
                     logger.info("'q' 키 입력됨. 프로그램을 종료합니다.")
                     break
-                elif key == ord('d'): # 'd' 입력 시 디버그 모드 토글
+                elif key == ord('d'):
                     self.debug_mode = not self.debug_mode
                     logger.info(f"디버그 모드: {'ON' if self.debug_mode else 'OFF'}")
         
@@ -674,7 +699,7 @@ class NinjaMasterHandTracker:
             traceback.print_exc()
             
         finally:
-            self.cleanup() # 루프 종료 시 리소스 정리
+            self.cleanup()
 
     def cleanup(self):
         """리소스 정리"""
@@ -687,15 +712,15 @@ class NinjaMasterHandTracker:
         logger.info("닌자 마스터 제스처 인식 시스템이 종료되었습니다.")
 
 
-# 테스트 모드 (test_osc_communication.py 파일 필요)
+# 테스트 모드
 def test_mode():
     """OSC 통신 테스트 모드"""
     try:
-        from test_osc_communication import OSCTester # 이 파일과 클래스가 존재해야 함
+        from test_osc_communication import OSCTester
         
         logger.info("=== OSC 통신 테스트 모드 시작 ===")
         tester = OSCTester()
-        tester.start_server() # OSCTester에 이 메서드가 있다고 가정
+        tester.start_server()
 
         while True:
             print("\n테스트 옵션:")
@@ -707,22 +732,22 @@ def test_mode():
             choice = input("선택: ")
             
             if choice == "1":
-                tester.test_all_gestures() # OSCTester에 이 메서드가 있다고 가정
+                tester.test_all_gestures()
             elif choice == "2":
-                tester.test_hand_tracking() # OSCTester에 이 메서드가 있다고 가정
+                tester.test_hand_tracking()
             elif choice == "3":
-                tester.simulate_gameplay() # OSCTester에 이 메서드가 있다고 가정
+                tester.simulate_gameplay()
             elif choice == "4":
                 break
             else:
                 print("잘못된 선택입니다. 다시 시도하세요.")
         
-        if hasattr(tester, 'stop_server'): # 서버 중지 메서드가 있다면 호출
+        if hasattr(tester, 'stop_server'):
              tester.stop_server()
         logger.info("OSC 테스트 모드 종료.")
 
     except ImportError:
-        logger.error("'test_osc_communication.py' 또는 'OSCTester' 클래스를 찾을 수 없습니다. 테스트 모드를 실행할 수 없습니다.")
+        logger.error("'test_osc_communication.py' 또는 'OSCTester' 클래스를 찾을 수 없습니다.")
     except Exception as e_test_mode:
         logger.error(f"테스트 모드 실행 중 오류 발생: {e_test_mode}")
 
@@ -736,24 +761,23 @@ if __name__ == "__main__":
     if is_test_mode:
         test_mode()
     else:
-        # 일반 실행 시 사용할 커스텀 안정화 장치 설정
+        # 안정화 설정을 더 관대하게 조정
         custom_stabilizer_settings = {
-            "stability_window": 0.4,    # 더 긴 안정화 시간
-            "confidence_threshold": 0.85, # 더 높은 최소 신뢰도
-            "cooldown_time": 0.7        # 더 긴 쿨다운
+            "stability_window": 0.2,      # 더 빠른 반응
+            "confidence_threshold": 0.6,   # 더 낮은 신뢰도 허용
+            "cooldown_time": 0.3          # 더 짧은 쿨다운
         }
         
         try:
-            # NinjaMasterHandTracker에 안정화 설정 전달
             tracker = NinjaMasterHandTracker(
                 stabilizer_settings_override=custom_stabilizer_settings
             )
             tracker.run()
-        except IOError as e_io_cam: # 웹캠 열기 실패 시
-            logger.critical(f"프로그램 시작 실패 (IOError): {e_io_cam}. 카메라를 사용할 수 없습니다.")
-        except KeyboardInterrupt: # 사용자가 Ctrl+C로 종료 시
+        except IOError as e:
+            logger.critical(f"프로그램 시작 실패: {e}")
+        except KeyboardInterrupt:
             logger.info("\n프로그램이 사용자에 의해 중단되었습니다.")
-        except Exception as e_global_run: # 기타 예기치 않은 오류
-            logger.critical(f"프로그램 실행 중 치명적인 오류 발생: {e_global_run}")
+        except Exception as e:
+            logger.critical(f"프로그램 실행 중 치명적인 오류 발생: {e}")
             import traceback
             traceback.print_exc()

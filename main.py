@@ -23,7 +23,7 @@ def print_banner():
     """시작 배너 출력"""
     print("""
     ╔═══════════════════════════════════════╗
-    ║       닌자 마스터 - NINJA MASTER      ║
+    ║       닌자 마스터 - NINJA MASTER        ║
     ║    Hand Gesture Recognition System    ║
     ╚═══════════════════════════════════════╝
     """)

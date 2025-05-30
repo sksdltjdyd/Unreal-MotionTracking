@@ -36,29 +36,29 @@ class Config:
     
     # MediaPipe 설정 - 인식률 향상
     MAX_HANDS = 2
-    MIN_DETECTION_CONFIDENCE = 0.5  # 더 쉽게 손 감지
+    MIN_DETECTION_CONFIDENCE = 0.4  # 더 쉽게 손 감지
     MIN_TRACKING_CONFIDENCE = 0.3   # 더 부드러운 추적
     MODEL_COMPLEXITY = 1
     
     # 카메라 설정
-    CAMERA_WIDTH = 1280
-    CAMERA_HEIGHT = 720
+    CAMERA_WIDTH = 1920
+    CAMERA_HEIGHT = 1080
     CAMERA_FPS = 30
     CAMERA_BUFFER_SIZE = 1
     
     # 제스처 임계값 - 모두 완화
-    FLICK_SPEED_THRESHOLD = 300     # 더 느린 움직임도 인식
-    FIST_ANGLE_THRESHOLD = 100      # 덜 굽혀도 인식
-    PALM_EXTEND_THRESHOLD = 140     # 덜 펴도 인식
-    CIRCLE_STD_THRESHOLD = 50       
-    CIRCLE_MIN_POINTS = 10          
-    CIRCLE_MIN_RADIUS_MEAN = 15     
-    CIRCLE_MIN_TOTAL_ANGLE = np.pi  # 180도만 그려도 인식
+    FLICK_SPEED_THRESHOLD = 200     # 더 느린 움직임도 인식
+    FIST_ANGLE_THRESHOLD = 90      # 덜 굽혀도 인식
+    PALM_EXTEND_THRESHOLD = 120     # 덜 펴도 인식
+    CIRCLE_STD_THRESHOLD = 60       
+    CIRCLE_MIN_POINTS = 8          
+    CIRCLE_MIN_RADIUS_MEAN = 10     
+    CIRCLE_MIN_TOTAL_ANGLE = np.pi * 1.5  # 180도만 그려도 인식
     
     # 기본 안정화 설정 (추가됨!)
-    DEFAULT_STABILITY_WINDOW = 0.3      # 제스처 유지 시간
-    DEFAULT_CONFIDENCE_THRESHOLD = 0.8   # 최소 신뢰도
-    DEFAULT_COOLDOWN_TIME = 0.5         # 재사용 대기 시간
+    DEFAULT_STABILITY_WINDOW = 0.15      # 제스처 유지 시간
+    DEFAULT_CONFIDENCE_THRESHOLD = 0.5   # 최소 신뢰도
+    DEFAULT_COOLDOWN_TIME = 0.3         # 재사용 대기 시간
     
     # 스무딩 설정
     SMOOTHING_BUFFER_SIZE = 3

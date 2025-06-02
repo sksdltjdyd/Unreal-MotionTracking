@@ -66,8 +66,8 @@ class Config:
     GESTURE_CHANGE_THRESHOLD = 0.2
     
     # 위치 트래킹 설정 (새로 추가)
-    POSITION_LEFT_THRESHOLD = 0.4     # 화면의 40% 이하는 좌측
-    POSITION_RIGHT_THRESHOLD = 0.6    # 화면의 60% 이상은 우측
+    POSITION_LEFT_THRESHOLD = 0.33     # 화면의 40% 이하는 좌측
+    POSITION_RIGHT_THRESHOLD = 0.67    # 화면의 60% 이상은 우측
     POSITION_TRACKING_SMOOTHING = 0.8 # 위치 스무딩 계수
 
 

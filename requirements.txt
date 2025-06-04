@@ -1,16 +1,4 @@
-# requirements.txt - 닌자 게임에 필요 패키지
-
-# MediaPipe와 OpenCV
-mediapipe==0.10.8
-opencv-python==4.8.0.74
-
-# 수치 계산
-numpy==1.24.0
-
-# OSC 통신
+opencv-python==4.8.1.78
+mediapipe==0.10.7
+numpy==1.24.3
 python-osc==1.8.3
-
-# 개발/디버깅용 (선택사항)
-# pytest==7.4.3
-# black==23.11.0
-# pylint==3.0.2

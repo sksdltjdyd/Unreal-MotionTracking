@@ -1,4 +1,4 @@
-# gesture_recognizer.py - 닌자 게임 인식 시스템 (심플 3제스처 버전 + 위치 트래킹)
+# gesture_recognizer.py - 닌자 게임 인식 시스템 (개선된 Flick 인식)
 
 import cv2
 import mediapipe as mp
@@ -48,27 +48,30 @@ class Config:
     Y_OFFSET_CORRECTION = 0.1
     
     # 제스처 임계값 - 3개 제스처에 최적화
-    FLICK_SPEED_THRESHOLD = 120      # 더 쉬운 플릭 인식
+    FLICK_SPEED_THRESHOLD = 180      # 속도 임계값 상향 (더 빠른 움직임 필요)
     FIST_ANGLE_THRESHOLD = 110       # 더 관대한 주먹 인식
     PALM_EXTEND_THRESHOLD = 130      # 5손가락 펴기 인식 완화
     
-    # 안정화 설정 - 빠른 게임플레이용
-    DEFAULT_STABILITY_WINDOW = 0.4   # 빠른 반응
-    DEFAULT_CONFIDENCE_THRESHOLD = 0.75
-    DEFAULT_COOLDOWN_TIME = 0.8      # 짧은 쿨다운
+    # Flick 정확도 향상을 위한 새로운 임계값
+    FINGER_TIP_DISTANCE_THRESHOLD = 0.03  # 화면 대비 3% 이내 거리 (거의 붙어있는 수준)
+    
+    # 안정화 설정 - 정확한 인식을 위해 강화
+    DEFAULT_STABILITY_WINDOW = 0.4      # 0.4초 동안 제스처 유지 필요
+    DEFAULT_CONFIDENCE_THRESHOLD = 0.75  # 75% 이상 신뢰도 필요
+    DEFAULT_COOLDOWN_TIME = 0.8         # 0.8초 쿨다운으로 연속 발동 방지
     
     # 스무딩 설정
     SMOOTHING_BUFFER_SIZE = 3
     FPS_BUFFER_SIZE = 30
     
-    # 노이즈 필터링
-    MOVEMENT_THRESHOLD = 10
-    GESTURE_CHANGE_THRESHOLD = 0.5
-    POSITION_CHANGE_THRESHOLD = 0.15    # 위치 변경 임계값 추가
+    # 노이즈 필터링 - 더 엄격하게
+    MOVEMENT_THRESHOLD = 10             # 10픽셀 이상 움직여야 인식
+    GESTURE_CHANGE_THRESHOLD = 0.5      # 50% 이상 변화해야 제스처 변경
+    POSITION_CHANGE_THRESHOLD = 0.15    # 위치 변경 임계값
     
-    # 위치 트래킹 설정 (새로 추가)
-    POSITION_LEFT_THRESHOLD = 0.33    # 화면의 40% 이하는 좌측
-    POSITION_RIGHT_THRESHOLD = 0.66   # 화면의 60% 이상은 우측
+    # 위치 트래킹 설정
+    POSITION_LEFT_THRESHOLD = 0.33    # 화면의 33% 이하는 좌측
+    POSITION_RIGHT_THRESHOLD = 0.66   # 화면의 66% 이상은 우측
     POSITION_TRACKING_SMOOTHING = 0.8 # 위치 스무딩 계수
 
 
@@ -81,65 +84,49 @@ class SimpleStabilizer:
         self.last_gesture_time = {}
         self.current_gesture = "none"
         self.current_gesture_start = 0
-        self.gesture_buffer = deque(maxlen=10)  # 5에서 10으로 증가
-        self.position_buffer = deque(maxlen=5)  # 위치 버퍼 추가
+        self.gesture_buffer = deque(maxlen=10)  # 버퍼 크기 증가
+        self.position_buffer = deque(maxlen=5)  # 위치 버퍼
         self.last_valid_position = "center"
         self.last_sent_gesture = "none"
     
     def should_send_gesture(self, gesture_type, confidence, hand_label, position=None):
         current_time = time.time()
         
-        # 1. None 제스처는 무시
         if gesture_type == "none":
             return False, None
         
-        # 2. 신뢰도 체크 - 더 엄격하게
+        # 신뢰도 체크 - 더 엄격하게
         if confidence < self.confidence_threshold:
             return False, None
         
-        # 3. 위치 안정화 (새로 추가)
+        # 위치 안정화
         if position:
             self.position_buffer.append(position)
             if len(self.position_buffer) >= 3:
-                # 가장 많이 나타난 위치 선택
                 position_counts = {}
                 for pos in self.position_buffer:
                     position_counts[pos] = position_counts.get(pos, 0) + 1
                 most_common_position = max(position_counts, key=position_counts.get)
-            
-                # 60% 이상 일치해야 위치 변경
+                
                 if position_counts[most_common_position] >= len(self.position_buffer) * 0.6:
                     self.last_valid_position = most_common_position
             position = self.last_valid_position
-    
-        # 4. 제스처 버퍼 처리 - 더 엄격하게
+        
         self.gesture_buffer.append(gesture_type)
-    
-        if len(self.gesture_buffer) >= 7:  # 최소 7개 샘플 필요
+        
+        # 버퍼의 70% 이상이 같은 제스처면 인식
+        if len(self.gesture_buffer) >= 7:
             gesture_count = {}
             for g in self.gesture_buffer:
                 gesture_count[g] = gesture_count.get(g, 0) + 1
-        
+            
             most_common = max(gesture_count, key=gesture_count.get)
-            # 70% 이상 일치해야 인식 (60%에서 증가)
             if gesture_count[most_common] >= len(self.gesture_buffer) * 0.7:
                 gesture_type = most_common
             else:
                 return False, None
         else:
-            return False, None  # 샘플이 부족하면 대기
-        
-        # 버퍼의 60% 이상이 같은 제스처면 인식
-        if len(self.gesture_buffer) >= 3:
-            gesture_count = {}
-            for g in self.gesture_buffer:
-                gesture_count[g] = gesture_count.get(g, 0) + 1
-            
-            most_common = max(gesture_count, key=gesture_count.get)
-            if gesture_count[most_common] >= len(self.gesture_buffer) * 0.6:
-                gesture_type = most_common
-            else:
-                return False, None
+            return False, None
         
         # 새로운 제스처 시작
         if gesture_type != self.current_gesture:
@@ -177,7 +164,7 @@ class SimpleStabilizer:
 
 
 class NinjaGestureRecognizer:
-    """닌자 게임 제스처 인식기 - 3제스처 + 위치 트래킹 버전"""
+    """닌자 게임 제스처 인식기 - 개선된 Flick 인식"""
     
     def __init__(self, osc_ip=None, osc_port=None, stabilizer_settings=None):
         # OSC 설정
@@ -217,14 +204,14 @@ class NinjaGestureRecognizer:
         self.prev_time = time.time()
         self.smoothed_landmarks = {"Left": None, "Right": None}
         
-        # 위치 추적용 변수 (새로 추가)
+        # 위치 추적용 변수
         self.hand_positions = {"Left": "center", "Right": "center"}
         self.smoothed_hand_x = {"Left": 0.5, "Right": 0.5}
         
         # 웹캠 각도 보정을 위한 변수
         self.angle_correction_matrix = self._create_angle_correction_matrix()
 
-        logger.info(f"Ninja Gesture Recognizer (3 Gestures + Position Tracking) initialized - OSC: {osc_ip or Config.OSC_IP}:{osc_port or Config.OSC_PORT}")
+        logger.info(f"Ninja Gesture Recognizer (Improved Flick Detection) initialized - OSC: {osc_ip or Config.OSC_IP}:{osc_port or Config.OSC_PORT}")
 
     def _create_angle_correction_matrix(self):
         """웹캠 각도 보정 매트릭스 생성"""
@@ -331,6 +318,21 @@ class NinjaGestureRecognizer:
         
         return position, smoothed_x
 
+    def check_finger_tips_distance(self, landmarks):
+        """검지와 중지 끝점 사이의 거리 체크 (화면 비율)"""
+        # 검지 끝과 중지 끝의 좌표
+        index_tip = landmarks[self.INDEX_TIP]
+        middle_tip = landmarks[self.MIDDLE_TIP]
+        
+        # 2D 거리 계산 (화면 비율)
+        distance = self.calculate_distance(
+            [index_tip.x, index_tip.y],
+            [middle_tip.x, middle_tip.y]
+        )
+        
+        # 거리가 임계값보다 작으면 True (손가락이 붙어있음)
+        return distance < Config.FINGER_TIP_DISTANCE_THRESHOLD, distance
+
     def detect_fist(self, landmarks):
         """주먹 쥐기 감지 - 공격 막기"""
         angles = self.calculate_finger_angles(landmarks)
@@ -353,7 +355,7 @@ class NinjaGestureRecognizer:
         return False, 0.0
 
     def detect_flick(self, current_landmarks, hand_label, img_width, img_height):
-        """손가락 튕기기 감지 - 표창 던지기 (개선된 방향 계산)"""
+        """손가락 튕기기 감지 - 표창 던지기 (개선된 정확도)"""
         if self.prev_landmarks[hand_label] is None:
             return False, None, 0.0, "center"
         
@@ -365,6 +367,13 @@ class NinjaGestureRecognizer:
         # 손 위치 계산
         position, _ = self.calculate_hand_position(current_landmarks, hand_label)
         
+        # ★ 새로운 조건: 검지와 중지 끝이 붙어있는지 확인
+        fingers_together, finger_distance = self.check_finger_tips_distance(current_landmarks)
+        if not fingers_together:
+            # 손가락이 충분히 가깝지 않으면 flick 인식 안 함
+            logger.debug(f"Fingers not close enough for flick: distance={finger_distance:.3f}")
+            return False, None, 0.0, position
+        
         # 검지와 중지 체크
         finger_tips = [self.INDEX_TIP, self.MIDDLE_TIP]
         best_flick = None
@@ -373,13 +382,13 @@ class NinjaGestureRecognizer:
         for finger_tip in finger_tips:
             curr_tip = current_landmarks[finger_tip]
             prev_tip = self.prev_landmarks[hand_label][finger_tip]
-        
+            
             curr_x, curr_y, _ = self._correct_landmark_position(curr_tip)
             prev_x, prev_y, _ = self._correct_landmark_position(prev_tip)
-        
+            
             curr_pos = np.array([curr_x * img_width, curr_y * img_height])
             prev_pos = np.array([prev_x * img_width, prev_y * img_height])
-        
+            
             distance = self.calculate_distance(curr_pos, prev_pos)
             
             # 움직임 임계값 증가
@@ -388,23 +397,27 @@ class NinjaGestureRecognizer:
             
             velocity = distance / dt
             
-             # 속도 임계값도 증가
-            if velocity > Config.FLICK_SPEED_THRESHOLD * 1.5 and velocity > best_velocity:
+            # 속도 임계값도 증가
+            if velocity > Config.FLICK_SPEED_THRESHOLD and velocity > best_velocity:
                 # 항상 전방으로만 발사 (언리얼에서 방향 제어)
                 simplified_direction = [1.0, 0.0]  # 항상 전방
-            
+                
                 # 손가락 펴짐 확인
                 finger_angles = self.calculate_finger_angles(current_landmarks)
                 finger_name = 'index' if finger_tip == self.INDEX_TIP else 'middle'
-            
+                
                 if finger_name in finger_angles and finger_angles[finger_name] > 120:
                     best_flick = simplified_direction
                     best_velocity = velocity
-    
+        
         if best_flick:
-            confidence = min(0.7 + (best_velocity - Config.FLICK_SPEED_THRESHOLD) / 500, 1.0)
+            # 신뢰도 계산 시 손가락 거리도 고려
+            distance_factor = 1.0 - (finger_distance / Config.FINGER_TIP_DISTANCE_THRESHOLD)
+            confidence = min(0.7 + (best_velocity - Config.FLICK_SPEED_THRESHOLD) / 500 + distance_factor * 0.1, 1.0)
+            
+            logger.info(f"Flick detected! Fingers distance: {finger_distance:.3f}, Velocity: {best_velocity:.1f}")
             return True, best_flick, best_velocity, position
-    
+        
         return False, None, 0.0, position
 
     def detect_palm_push(self, landmarks, hand_label):
@@ -586,6 +599,26 @@ class NinjaGestureRecognizer:
                         frame_to_draw_on, hand_landmarks_obj, self.mp_hands.HAND_CONNECTIONS
                     )
                     
+                    # 검지와 중지 끝점 사이 거리 시각화 (디버그용)
+                    landmarks = hand_landmarks_obj.landmark
+                    index_tip = landmarks[self.INDEX_TIP]
+                    middle_tip = landmarks[self.MIDDLE_TIP]
+                    
+                    # 화면 좌표로 변환
+                    h, w = frame_input.shape[:2]
+                    index_pos = (int(index_tip.x * w), int(index_tip.y * h))
+                    middle_pos = (int(middle_tip.x * w), int(middle_tip.y * h))
+                    
+                    # 손가락 끝점 사이 선 그리기
+                    fingers_together, distance = self.check_finger_tips_distance(landmarks)
+                    line_color = (0, 255, 0) if fingers_together else (0, 0, 255)  # 초록: 붙어있음, 빨강: 떨어져있음
+                    cv2.line(frame_to_draw_on, index_pos, middle_pos, line_color, 2)
+                    
+                    # 거리 표시
+                    mid_point = ((index_pos[0] + middle_pos[0]) // 2, (index_pos[1] + middle_pos[1]) // 2)
+                    cv2.putText(frame_to_draw_on, f"{distance:.3f}", mid_point, 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, line_color, 1, cv2.LINE_AA)
+                    
                     # 제스처 인식
                     raw_gesture_type, raw_gesture_data = self.recognize_gesture(
                         hand_landmarks_obj, hand_label, frame_input.shape
@@ -662,7 +695,7 @@ class NinjaMasterHandTracker:
         self.last_time = time.time()
         self.debug_mode = True
         
-        logger.info("Ninja Master Hand Tracker (3 Gestures + Position) initialized.")
+        logger.info("Ninja Master Hand Tracker (Improved Flick Detection) initialized.")
 
     def calculate_fps(self):
         """FPS 계산"""
@@ -678,7 +711,7 @@ class NinjaMasterHandTracker:
         return np.mean(self.fps_counter) if len(self.fps_counter) > 0 else 0.0
 
     def draw_debug_info(self, frame, fps, debug_messages_list):
-        """디버그 정보 그리기 (위치 정보 포함)"""
+        """디버그 정보 그리기 (개선된 Flick 정보 포함)"""
         # FPS
         cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), 
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
@@ -709,13 +742,17 @@ class NinjaMasterHandTracker:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2, cv2.LINE_AA)
             y_offset += 30
         
-        # 제스처 가이드 - 위치 정보 추가
-        guide_y = height - 180
-        cv2.putText(frame, "=== 3 Core Gestures + Position ===", (10, guide_y), 
+        # Flick 검지-중지 거리 임계값 표시
+        cv2.putText(frame, f"Flick Finger Distance Threshold: {Config.FINGER_TIP_DISTANCE_THRESHOLD:.3f}", 
+                    (10, height - 250), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 100), 2, cv2.LINE_AA)
+        
+        # 제스처 가이드 - 개선된 Flick 설명
+        guide_y = height - 220
+        cv2.putText(frame, "=== 3 Core Gestures + Improved Flick ===", (10, guide_y), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
         
         gestures = [
-            ("1. FLICK", "Quick finger movement", "Throw Shuriken (L/C/R)", (255, 100, 100)),
+            ("1. FLICK", "Index & Middle together + Quick move", "Throw Shuriken (L/C/R)", (255, 100, 100)),
             ("2. FIST", "Close your hand", "Block Attack", (100, 255, 100)),
             ("3. PALM PUSH", "Open all 5 fingers", "Shock Wave (L/C/R)", (100, 100, 255))
         ]
@@ -725,20 +762,25 @@ class NinjaMasterHandTracker:
             cv2.putText(frame, f"{gesture}: {desc} = {action}", (10, y_pos), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
         
+        # Flick 정확도 향상 안내
+        cv2.putText(frame, "Flick Tip: Keep index & middle fingers touching!", (10, height - 100), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 200, 100), 2, cv2.LINE_AA)
+        
         # 위치 추적 정보
         cv2.putText(frame, "Position Tracking: LEFT | CENTER | RIGHT", (10, height - 70), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 255), 2, cv2.LINE_AA)
             
         # 하단 정보
-        cv2.putText(frame, "Ninja Master - 3 Gesture + Position System", (10, height - 40), 
+        cv2.putText(frame, "Ninja Master - Improved Flick Detection System", (10, height - 40), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
         cv2.putText(frame, "Q: Quit | D: Debug Toggle", (10, height - 10), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2, cv2.LINE_AA)
 
     def run(self):
         """메인 루프"""
-        logger.info("Starting Ninja Master - Simple 3 Gesture System with Position Tracking...")
-        logger.info("Gestures: FLICK (표창), FIST (방어), PALM (진동파) + Position (L/C/R)")
+        logger.info("Starting Ninja Master - Improved Flick Detection System...")
+        logger.info("Flick now requires index & middle fingers to be touching!")
+        logger.info("Finger distance threshold: {:.3f}".format(Config.FINGER_TIP_DISTANCE_THRESHOLD))
         
         try:
             while True:
@@ -754,7 +796,7 @@ class NinjaMasterHandTracker:
                 if self.debug_mode:
                     self.draw_debug_info(processed_display_frame, current_fps, current_debug_messages)
                 
-                cv2.imshow("Ninja Master", processed_display_frame)
+                cv2.imshow("Ninja Master - Improved Flick", processed_display_frame)
                 
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
@@ -784,11 +826,11 @@ class NinjaMasterHandTracker:
 
 
 def test_mode():
-    """OSC 통신 테스트 모드 (위치 정보 포함)"""
+    """OSC 통신 테스트 모드 (개선된 Flick 포함)"""
     try:
         from test_osc_communication import OSCTester
         
-        logger.info("=== OSC 테스트 모드 (3 Gestures + Position) ===")
+        logger.info("=== OSC 테스트 모드 (Improved Flick Detection) ===")
         tester = OSCTester()
         tester.start_server()
 
@@ -796,9 +838,10 @@ def test_mode():
             print("\n테스트 옵션:")
             print("1. 3가지 제스처 테스트")
             print("2. 방향별 플릭 테스트")
-            print("3. 위치별 제스처 테스트 (NEW)")
+            print("3. 위치별 제스처 테스트")
             print("4. 개별 제스처 테스트")
-            print("5. 종료")
+            print("5. 손가락 거리 테스트")
+            print("6. 종료")
             
             choice = input("선택: ")
             
@@ -820,96 +863,17 @@ def test_mode():
                     if gesture == "flick":
                         tester.client.send_message("/ninja/gesture/direction", [1.0, 0.0])
                         tester.client.send_message("/ninja/gesture/speed", 250.0)
+                        print("  (검지와 중지가 붙어있는 상태에서 빠르게 움직임)")
                     
                     time.sleep(1.5)
                     
-            elif choice == "2":
-                print("\n방향별 플릭 테스트:")
-                directions = [
-                    ([1.0, 0.0], "오른쪽"),
-                    ([-1.0, 0.0], "왼쪽"),
-                    ([0.0, 1.0], "아래"),
-                    ([0.0, -1.0], "위")
-                ]
-                for direction, name in directions:
-                    print(f"- {name} 플릭")
-                    tester.client.send_message("/ninja/gesture/type", "flick")
-                    tester.client.send_message("/ninja/gesture/action", "throw_shuriken")
-                    tester.client.send_message("/ninja/gesture/direction", direction)
-                    tester.client.send_message("/ninja/gesture/speed", 300.0)
-                    tester.client.send_message("/ninja/gesture/confidence", 0.9)
-                    tester.client.send_message("/ninja/gesture/hand", "Right")
-                    time.sleep(1)
-                    
-            elif choice == "3":
-                print("\n위치별 제스처 테스트:")
-                positions = ["left", "center", "right"]
-                
-                # Flick 위치별 테스트
-                print("\n- FLICK 위치별 테스트")
-                for position in positions:
-                    print(f"  {position.upper()} 플릭")
-                    tester.client.send_message("/ninja/gesture/type", "flick")
-                    tester.client.send_message("/ninja/gesture/action", "throw_shuriken")
-                    tester.client.send_message("/ninja/gesture/position", position)
-                    tester.client.send_message("/ninja/gesture/position_action", f"throw_shuriken_{position}")
-                    tester.client.send_message("/ninja/gesture/direction", [1.0, 0.0])
-                    tester.client.send_message("/ninja/gesture/speed", 300.0)
-                    tester.client.send_message("/ninja/gesture/confidence", 0.9)
-                    tester.client.send_message("/ninja/gesture/hand", "Right")
-                    time.sleep(1)
-                
-                # Palm Push 위치별 테스트
-                print("\n- PALM PUSH 위치별 테스트")
-                for position in positions:
-                    print(f"  {position.upper()} 진동파")
-                    tester.client.send_message("/ninja/gesture/type", "palm_push")
-                    tester.client.send_message("/ninja/gesture/action", "shock_wave")
-                    tester.client.send_message("/ninja/gesture/position", position)
-                    tester.client.send_message("/ninja/gesture/position_action", f"shock_wave_{position}")
-                    tester.client.send_message("/ninja/gesture/confidence", 0.9)
-                    tester.client.send_message("/ninja/gesture/hand", "Right")
-                    time.sleep(1)
-                    
-            elif choice == "4":
-                print("\n개별 제스처 선택:")
-                print("1. FLICK (표창 던지기)")
-                print("2. FIST (공격 막기)")
-                print("3. PALM PUSH (진동파)")
-                
-                gesture_choice = input("선택: ")
-                
-                if gesture_choice == "1":
-                    position = input("위치 선택 (left/center/right): ").lower()
-                    if position not in ["left", "center", "right"]:
-                        position = "center"
-                    
-                    tester.client.send_message("/ninja/gesture/type", "flick")
-                    tester.client.send_message("/ninja/gesture/action", "throw_shuriken")
-                    tester.client.send_message("/ninja/gesture/position", position)
-                    tester.client.send_message("/ninja/gesture/position_action", f"throw_shuriken_{position}")
-                    tester.client.send_message("/ninja/gesture/direction", [1.0, 0.0])
-                    tester.client.send_message("/ninja/gesture/speed", 350.0)
-                    tester.client.send_message("/ninja/gesture/confidence", 0.9)
-                elif gesture_choice == "2":
-                    tester.client.send_message("/ninja/gesture/type", "fist")
-                    tester.client.send_message("/ninja/gesture/action", "block_attack")
-                    tester.client.send_message("/ninja/gesture/confidence", 0.85)
-                elif gesture_choice == "3":
-                    position = input("위치 선택 (left/center/right): ").lower()
-                    if position not in ["left", "center", "right"]:
-                        position = "center"
-                        
-                    tester.client.send_message("/ninja/gesture/type", "palm_push")
-                    tester.client.send_message("/ninja/gesture/action", "shock_wave")
-                    tester.client.send_message("/ninja/gesture/position", position)
-                    tester.client.send_message("/ninja/gesture/position_action", f"shock_wave_{position}")
-                    tester.client.send_message("/ninja/gesture/confidence", 0.95)
-                
-                tester.client.send_message("/ninja/gesture/hand", "Right")
-                print("제스처 전송 완료!")
-                
             elif choice == "5":
+                print("\n손가락 거리 테스트:")
+                print(f"현재 임계값: {Config.FINGER_TIP_DISTANCE_THRESHOLD:.3f}")
+                print("검지와 중지 끝이 이 거리 이내에 있어야 Flick 인식")
+                print("화면에서 빨간선 = 떨어져있음, 초록선 = 붙어있음")
+                
+            elif choice == "6":
                 break
         
         tester.stop_server()
@@ -929,25 +893,25 @@ if __name__ == "__main__":
     if is_test_mode:
         test_mode()
     else:
-        # 3 제스처 시스템 + 위치 트래킹에 최적화된 설정
+        # 안정적인 설정
         custom_stabilizer_settings = {
-            "stability_window": 0.15,      # 빠른 반응
-            "confidence_threshold": 0.5,   # 적절한 신뢰도
-            "cooldown_time": 0.3          # 짧은 쿨다운
+            "stability_window": 0.4,      # 안정적인 인식
+            "confidence_threshold": 0.75,  # 높은 신뢰도
+            "cooldown_time": 0.8          # 충분한 쿨다운
         }
         
         print("\n")
         print("=" * 60)
-        print("    닌자 마스터 - 3 제스처 + 위치 트래킹 시스템")
+        print("    닌자 마스터 - 개선된 Flick 인식 시스템")
         print("=" * 60)
+        print("\n핵심 개선사항:")
+        print("  • FLICK - 검지와 중지가 붙어있을 때만 인식")
+        print(f"  • 손가락 거리 임계값: {Config.FINGER_TIP_DISTANCE_THRESHOLD:.3f}")
+        print("  • 화면에 손가락 거리 시각화 (빨강/초록)")
         print("\n핵심 제스처:")
-        print("  1. FLICK     - 손가락 튕기기 → 표창 던지기 (L/C/R)")
-        print("  2. FIST      - 주먹 쥐기     → 공격 막기")
-        print("  3. PALM PUSH - 5손가락 펴기  → 진동파 (L/C/R)")
-        print("\n위치 구분:")
-        print("  • LEFT   - 화면 왼쪽 40% 영역")
-        print("  • CENTER - 화면 중앙 20% 영역")
-        print("  • RIGHT  - 화면 오른쪽 40% 영역")
+        print("  1. FLICK     - 손가락 붙이고 튕기기 → 표창 던지기 (L/C/R)")
+        print("  2. FIST      - 주먹 쥐기          → 공격 막기")
+        print("  3. PALM PUSH - 5손가락 펴기       → 진동파 (L/C/R)")
         print("\n조작법:")
         print("  • Q - 종료")
         print("  • D - 디버그 모드 전환")

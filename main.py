@@ -42,27 +42,27 @@ def print_banner():
     print("-" * 55)
 
 def get_stabilizer_settings(mode="normal"):
-    """모드별 안정화 설정 반환"""
+    """모드별 안정화 설정 반환 - 전체적으로 강화"""
     settings = {
         "easy": {
-            "stability_window": 0.5,      # 0.5초 동안 유지
-            "confidence_threshold": 0.75,  # 75% 신뢰도
-            "cooldown_time": 0.8          # 0.8초 쿨다운
+            "stability_window": 0.8,      # 0.8초 동안 유지 (0.5에서 증가)
+            "confidence_threshold": 0.85,  # 85% 신뢰도 (75%에서 증가)
+            "cooldown_time": 1.2          # 1.2초 쿨다운 (0.8에서 증가)
         },
         "normal": {
-            "stability_window": 0.3,      # 0.3초 동안 유지
-            "confidence_threshold": 0.8,   # 80% 신뢰도
-            "cooldown_time": 0.5          # 0.5초 쿨다운
+            "stability_window": 0.5,      # 0.5초 동안 유지 (0.3에서 증가)
+            "confidence_threshold": 0.8,   # 80% 신뢰도 (유지)
+            "cooldown_time": 0.8          # 0.8초 쿨다운 (0.5에서 증가)
         },
         "stable": {
-            "stability_window": 0.4,      # 0.4초 동안 유지
-            "confidence_threshold": 0.85,  # 85% 신뢰도
-            "cooldown_time": 0.7          # 0.7초 쿨다운
+            "stability_window": 0.6,      # 0.6초 동안 유지 (0.4에서 증가)
+            "confidence_threshold": 0.9,   # 90% 신뢰도 (85%에서 증가)
+            "cooldown_time": 1.0          # 1.0초 쿨다운 (0.7에서 증가)
         },
         "expert": {
-            "stability_window": 0.2,      # 0.2초 동안 유지
-            "confidence_threshold": 0.7,   # 70% 신뢰도
-            "cooldown_time": 0.3          # 0.3초 쿨다운
+            "stability_window": 0.3,      # 0.3초 동안 유지 (0.2에서 증가)
+            "confidence_threshold": 0.75,  # 75% 신뢰도 (70%에서 증가)
+            "cooldown_time": 0.5          # 0.5초 쿨다운 (0.3에서 증가)
         }
     }
     return settings.get(mode, settings["normal"])

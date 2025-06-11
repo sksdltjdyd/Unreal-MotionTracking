@@ -53,7 +53,7 @@ class Config:
     PALM_EXTEND_THRESHOLD = 130      # 5손가락 펴기 인식 완화
     
     # Flick 정확도 향상을 위한 새로운 임계값
-    FINGER_TIP_DISTANCE_THRESHOLD = 0.03  # 화면 대비 3% 이내 거리 (거의 붙어있는 수준)
+    FINGER_TIP_DISTANCE_THRESHOLD = 0.04  # 화면 대비 3% 이내 거리 (거의 붙어있는 수준)
     
     # 안정화 설정 - 정확한 인식을 위해 강화
     DEFAULT_STABILITY_WINDOW = 0.4      # 0.4초 동안 제스처 유지 필요

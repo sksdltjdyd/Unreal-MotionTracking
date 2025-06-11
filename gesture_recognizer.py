@@ -53,17 +53,18 @@ class Config:
     PALM_EXTEND_THRESHOLD = 130      # 5손가락 펴기 인식 완화
     
     # 안정화 설정 - 빠른 게임플레이용
-    DEFAULT_STABILITY_WINDOW = 0.15   # 빠른 반응
-    DEFAULT_CONFIDENCE_THRESHOLD = 0.5
-    DEFAULT_COOLDOWN_TIME = 0.3      # 짧은 쿨다운
+    DEFAULT_STABILITY_WINDOW = 0.4   # 빠른 반응
+    DEFAULT_CONFIDENCE_THRESHOLD = 0.75
+    DEFAULT_COOLDOWN_TIME = 0.8      # 짧은 쿨다운
     
     # 스무딩 설정
     SMOOTHING_BUFFER_SIZE = 3
     FPS_BUFFER_SIZE = 30
     
     # 노이즈 필터링
-    MOVEMENT_THRESHOLD = 3
-    GESTURE_CHANGE_THRESHOLD = 0.2
+    MOVEMENT_THRESHOLD = 10
+    GESTURE_CHANGE_THRESHOLD = 0.5
+    POSITION_CHANGE_THRESHOLD = 0.15    # 위치 변경 임계값 추가
     
     # 위치 트래킹 설정 (새로 추가)
     POSITION_LEFT_THRESHOLD = 0.33    # 화면의 40% 이하는 좌측
@@ -80,20 +81,53 @@ class SimpleStabilizer:
         self.last_gesture_time = {}
         self.current_gesture = "none"
         self.current_gesture_start = 0
-        self.gesture_buffer = deque(maxlen=5)
+        self.gesture_buffer = deque(maxlen=10)  # 5에서 10으로 증가
+        self.position_buffer = deque(maxlen=5)  # 위치 버퍼 추가
+        self.last_valid_position = "center"
         self.last_sent_gesture = "none"
     
-    def should_send_gesture(self, gesture_type, confidence, hand_label):
+    def should_send_gesture(self, gesture_type, confidence, hand_label, position=None):
         current_time = time.time()
         
+        # 1. None 제스처는 무시
         if gesture_type == "none":
             return False, None
         
-        # 신뢰도 체크
+        # 2. 신뢰도 체크 - 더 엄격하게
         if confidence < self.confidence_threshold:
             return False, None
         
+        # 3. 위치 안정화 (새로 추가)
+        if position:
+            self.position_buffer.append(position)
+            if len(self.position_buffer) >= 3:
+                # 가장 많이 나타난 위치 선택
+                position_counts = {}
+                for pos in self.position_buffer:
+                    position_counts[pos] = position_counts.get(pos, 0) + 1
+                most_common_position = max(position_counts, key=position_counts.get)
+            
+                # 60% 이상 일치해야 위치 변경
+                if position_counts[most_common_position] >= len(self.position_buffer) * 0.6:
+                    self.last_valid_position = most_common_position
+            position = self.last_valid_position
+    
+        # 4. 제스처 버퍼 처리 - 더 엄격하게
         self.gesture_buffer.append(gesture_type)
+    
+        if len(self.gesture_buffer) >= 7:  # 최소 7개 샘플 필요
+            gesture_count = {}
+            for g in self.gesture_buffer:
+                gesture_count[g] = gesture_count.get(g, 0) + 1
+        
+            most_common = max(gesture_count, key=gesture_count.get)
+            # 70% 이상 일치해야 인식 (60%에서 증가)
+            if gesture_count[most_common] >= len(self.gesture_buffer) * 0.7:
+                gesture_type = most_common
+            else:
+                return False, None
+        else:
+            return False, None  # 샘플이 부족하면 대기
         
         # 버퍼의 60% 이상이 같은 제스처면 인식
         if len(self.gesture_buffer) >= 3:
@@ -319,7 +353,7 @@ class NinjaGestureRecognizer:
         return False, 0.0
 
     def detect_flick(self, current_landmarks, hand_label, img_width, img_height):
-        """손가락 튕기기 감지 - 표창 던지기 (위치 정보 포함)"""
+        """손가락 튕기기 감지 - 표창 던지기 (개선된 방향 계산)"""
         if self.prev_landmarks[hand_label] is None:
             return False, None, 0.0, "center"
         
@@ -339,52 +373,38 @@ class NinjaGestureRecognizer:
         for finger_tip in finger_tips:
             curr_tip = current_landmarks[finger_tip]
             prev_tip = self.prev_landmarks[hand_label][finger_tip]
-            
+        
             curr_x, curr_y, _ = self._correct_landmark_position(curr_tip)
             prev_x, prev_y, _ = self._correct_landmark_position(prev_tip)
-            
+        
             curr_pos = np.array([curr_x * img_width, curr_y * img_height])
             prev_pos = np.array([prev_x * img_width, prev_y * img_height])
-            
+        
             distance = self.calculate_distance(curr_pos, prev_pos)
             
-            if distance < Config.MOVEMENT_THRESHOLD:
+            # 움직임 임계값 증가
+            if distance < Config.MOVEMENT_THRESHOLD * 2:  # 더 큰 움직임 필요
                 continue
             
             velocity = distance / dt
             
-            if velocity > Config.FLICK_SPEED_THRESHOLD and velocity > best_velocity:
-                direction_vector = curr_pos - prev_pos
-                norm_direction = np.linalg.norm(direction_vector)
-                
-                if norm_direction > 0:
-                    direction_normalized = direction_vector / norm_direction
-                    
-                    # 방향을 4방향으로 단순화
-                    angle = np.arctan2(direction_normalized[1], direction_normalized[0])
-                    angle_deg = np.degrees(angle)
-                    
-                    if -45 <= angle_deg <= 45:
-                        simplified_direction = [1.0, 0.0]  # 오른쪽
-                    elif angle_deg > 45 and angle_deg <= 135:
-                        simplified_direction = [0.0, 1.0]  # 아래
-                    elif angle_deg < -45 and angle_deg >= -135:
-                        simplified_direction = [0.0, -1.0]  # 위
-                    else:
-                        simplified_direction = [-1.0, 0.0]  # 왼쪽
-                    
-                    # 손가락 펴짐 확인
-                    finger_angles = self.calculate_finger_angles(current_landmarks)
-                    finger_name = 'index' if finger_tip == self.INDEX_TIP else 'middle'
-                    
-                    if finger_name in finger_angles and finger_angles[finger_name] > 120:
-                        best_flick = simplified_direction
-                        best_velocity = velocity
-        
+             # 속도 임계값도 증가
+            if velocity > Config.FLICK_SPEED_THRESHOLD * 1.5 and velocity > best_velocity:
+                # 항상 전방으로만 발사 (언리얼에서 방향 제어)
+                simplified_direction = [1.0, 0.0]  # 항상 전방
+            
+                # 손가락 펴짐 확인
+                finger_angles = self.calculate_finger_angles(current_landmarks)
+                finger_name = 'index' if finger_tip == self.INDEX_TIP else 'middle'
+            
+                if finger_name in finger_angles and finger_angles[finger_name] > 120:
+                    best_flick = simplified_direction
+                    best_velocity = velocity
+    
         if best_flick:
             confidence = min(0.7 + (best_velocity - Config.FLICK_SPEED_THRESHOLD) / 500, 1.0)
             return True, best_flick, best_velocity, position
-        
+    
         return False, None, 0.0, position
 
     def detect_palm_push(self, landmarks, hand_label):

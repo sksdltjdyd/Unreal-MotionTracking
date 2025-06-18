@@ -449,7 +449,7 @@ class NinjaGestureRecognizer:
         """통합 제스처 인식 - 위치 정보 포함"""
         landmarks = self._smooth_landmarks(hand_landmarks_obj.landmark, hand_label)
         height, width = img_shape[:2]
-        
+    
         current_gesture = GestureType.NONE
         gesture_data = {"confidence": 0.0}
 
@@ -458,17 +458,25 @@ class NinjaGestureRecognizer:
         is_flick, flick_dir, flick_speed, flick_position = self.detect_flick(
             landmarks, hand_label, width, height
         )
-        if is_flick:
-            current_gesture = GestureType.FLICK
-            gesture_data = {
-                "direction": flick_dir,
-                "speed": flick_speed,
-                "confidence": 0.85, # 임시 신뢰도
-                "action": "throw_shuriken",
-                "position": flick_position
-            }
-        else:
-            # 2. 주먹 (공격 막기)
+       # 우선순위에 따른 제스처 인식
+        # 1. 플릭 (표창 던지기) - 오른손만 인식
+        if hand_label == "Right":  # ★ 오른손일 때만 Flick 검사
+            is_flick, flick_dir, flick_speed, flick_position = self.detect_flick(
+            landmarks, hand_label, width, height
+            )
+            if is_flick:
+                current_gesture = GestureType.FLICK
+                gesture_data = {
+                    "direction": flick_dir,
+                    "speed": flick_speed,
+                    "confidence": 0.85,
+                    "action": "throw_shuriken",
+                    "position": flick_position
+                }
+    
+        # Flick이 아닐 때만 다른 제스처 검사
+        if current_gesture == GestureType.NONE:
+            # 2. 주먹 (공격 막기) - 양손 모두 가능
             is_fist, fist_conf = self.detect_fist(landmarks)
             if is_fist:
                 current_gesture = GestureType.FIST
@@ -477,7 +485,7 @@ class NinjaGestureRecognizer:
                     "action": "block_attack"
                 }
             else:
-                # 3. 손바닥 밀기 (진동파)
+                # 3. 손바닥 밀기 (진동파) - 양손 모두 가능
                 is_push, push_conf, push_position = self.detect_palm_push(landmarks, hand_label)
                 if is_push:
                     current_gesture = GestureType.PALM_PUSH
@@ -743,9 +751,9 @@ class NinjaMasterHandTracker:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
         
         gestures = [
-            ("FLICK", "Index-Mid Close + Fast Move", (0, 255, 0)),
-            ("FIST", "Close Hand", (255, 255, 0)),
-            ("PALM", "All Fingers Open + Index-Mid Apart", (0, 255, 255))
+            ("FLICK", "Index-Mid Close + Fast Move (RIGHT HAND ONLY)", (0, 255, 0)),  # ★ 수정
+            ("FIST", "Close Hand (Both Hands)", (255, 255, 0)),
+            ("PALM", "All Fingers Open + Index-Mid Apart (Both Hands)", (0, 255, 255))
         ]
         for i, (name, desc, color) in enumerate(gestures):
             y_pos = guide_y + 25 + (i * 25)
@@ -887,25 +895,25 @@ if __name__ == "__main__":
     if is_test_mode:
         test_mode()
     else:
-        # 안정적인 설정
+        # ★ 개선된 반응 속도 설정
         custom_stabilizer_settings = {
-            "stability_window": 0.4,
-            "confidence_threshold": 0.75,
-            "cooldown_time": 0.8
+            "stability_window": 0.15,      # 빠른 반응
+            "confidence_threshold": 0.65,   # 더 관대한 인식
+            "cooldown_time": 0.3            # 짧은 쿨다운
         }
         
         print("\n" + "=" * 60)
-        print("      닌자 마스터 - 향상된 정확도 시스템")
+        print("      닌자 마스터 - 빠른 반응 시스템")
         print("=" * 60)
         print("\n핵심 개선사항:")
-        # --- 수정된 설명 ---
-        print("  • FLICK: '검지'와 '중지'가 가까워야 인식됩니다.")
-        print("  • PALM PUSH: '검지'와 '중지'가 멀어야 인식됩니다.")
+        print("  • FLICK: 오른손으로만 인식됩니다!")  # ★ 추가
+        print("  • FIST/PALM: 양손 모두 사용 가능")
+        print("  • 반응 속도: 150ms 이내로 개선")
         print(f"  • Flick 거리 임계값: < {Config.FLICK_FINGER_DISTANCE_THRESHOLD:.3f}")
         print(f"  • Palm 거리 임계값: > {Config.PALM_FINGER_DISTANCE_THRESHOLD:.3f}")
         print("\n화면 표시:")
         print("  • 초록선: Flick 조건 만족 (손가락 가까움)")
-        print("  • 노란선: Palm Push 조건 만족 (손가락 멈)")
+        print("  • 노란선: Palm Push 조건 만족 (손가락 멀음)")
         print("  • 빨간선: 조건 불만족")
         print("\n조작법:")
         print("  • Q - 종료")

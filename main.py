@@ -1,11 +1,12 @@
-# main.py - 닌자 마스터 실행 파일
+# main.py - 닌자 마스터 실행 파일 (멀티 제스처 버전)
 
 """
-닌자 마스터 제스처 인식 시스템
+닌자 마스터 제스처 인식 시스템 - 멀티 제스처 버전 v2.0
 실행 방법:
-    python main.py          # 일반 실행
-    python main.py test     # 테스트 모드
-    python main.py --stable # 더 안정적인 설정으로 실행
+    python main.py          # 빠른 모드 (기본값)
+    python main.py --normal # 일반 모드
+    python main.py --ultra  # 초고속 모드 (매우 민감)
+    python main.py --help   # 도움말
 """
 
 import sys
@@ -23,102 +24,80 @@ def print_banner():
     """시작 배너 출력"""
     print("""
     ╔═══════════════════════════════════════════════════╗
-    ║       닌자 마스터 - NINJA MASTER                   Q ║
-    ║    Hand Gesture Recognition System                ║
-    ║         with Position Tracking                    ║
+    ║      닌자 마스터 - Multi-Gesture Edition v2.0       ║
+    ║          Ultra Fast Hand Gesture System           ║
     ╚═══════════════════════════════════════════════════╝
     """)
-    print("제스처 명령:")
-    print("  • 손가락 튕기기 (Flick) - 수리검 발사 [위치별]")
-    print("  • 주먹 쥐기 (Fist) - 공격 막기")
-    print("  • 손바닥 밀기 (Palm Push) - 충격파 [위치별]")
+    print("제스처 명령 (양손 지원):")
+    print("  • 손가락 튕기기 (Flick) - 수리검 발사")
+    print("    - 검지/중지 붙이고 빠르게 움직이거나 위로 튕기기")
+    print("  • 주먹 쥐기 (Fist) - 기 모으기 등")
+    print("  • 핀치 (Pinch) - 아이템 선택 등")
+    print("    - 엄지와 검지 끝 맞대기")
     print("\n위치 트래킹:")
-    print("  • LEFT   - 화면 왼쪽 영역")
-    print("  • CENTER - 화면 중앙 영역")
-    print("  • RIGHT  - 화면 오른쪽 영역")
+    print("  • LEFT / CENTER / RIGHT")
     print("\n조작법:")
     print("  • 'q' - 종료")
     print("  • 'd' - 디버그 모드 토글")
     print("-" * 55)
 
-def get_stabilizer_settings(mode="normal"):
-    """모드별 안정화 설정 반환 - 전체적으로 강화"""
+def get_stabilizer_settings(mode="fast"):
+    """모드별 안정화 설정 반환"""
     settings = {
-        "easy": {
-            "stability_window": 0.8,      # 0.8초 동안 유지 (0.5에서 증가)
-            "confidence_threshold": 0.85,  # 85% 신뢰도 (75%에서 증가)
-            "cooldown_time": 1.2          # 1.2초 쿨다운 (0.8에서 증가)
-        },
         "normal": {
-            "stability_window": 0.5,      # 0.5초 동안 유지 (0.3에서 증가)
-            "confidence_threshold": 0.8,   # 80% 신뢰도 (유지)
-            "cooldown_time": 0.8          # 0.8초 쿨다운 (0.5에서 증가)
+            "stability_window": 0.1,    # 100ms
+            "confidence_threshold": 0.7,  # 70% 신뢰도
+            "cooldown_time": 0.4        # 400ms 쿨다운
         },
-        "stable": {
-            "stability_window": 0.6,      # 0.6초 동안 유지 (0.4에서 증가)
-            "confidence_threshold": 0.9,   # 90% 신뢰도 (85%에서 증가)
-            "cooldown_time": 1.0          # 1.0초 쿨다운 (0.7에서 증가)
+        "fast": {
+            "stability_window": 0.05,   # 50ms
+            "confidence_threshold": 0.65, # 65% 신뢰도
+            "cooldown_time": 0.3        # 300ms 쿨다운
         },
-        "expert": {
-            "stability_window": 0.3,      # 0.3초 동안 유지 (0.2에서 증가)
-            "confidence_threshold": 0.75,  # 75% 신뢰도 (70%에서 증가)
-            "cooldown_time": 0.5          # 0.5초 쿨다운 (0.3에서 증가)
+        "ultra": {
+            "stability_window": 0.02,   # 20ms - 초고속
+            "confidence_threshold": 0.6,  # 60% 신뢰도
+            "cooldown_time": 0.2        # 200ms 쿨다운
         }
     }
-    return settings.get(mode, settings["normal"])
+    return settings.get(mode, settings["fast"])
 
 def main():
     """메인 함수"""
     print_banner()
     
     # 명령행 인자 파싱
+    mode = "fast" # 기본 모드
     if len(sys.argv) > 1:
-        if sys.argv[1] == "test":
-            # 테스트 모드
-            print("\n테스트 모드로 실행합니다...")
-            try:
-                from gesture_recognizer import test_mode
-                test_mode()
-            except ImportError:
-                print("테스트 모드를 실행할 수 없습니다. test_osc_communication.py 파일이 필요합니다.")
-            return
-            
-        elif sys.argv[1] == "--help" or sys.argv[1] == "-h":
+        arg = sys.argv[1]
+        if arg == "--help" or arg == "-h":
             print("\n사용법:")
-            print("  python main.py              # 일반 실행 (normal 모드)")
-            print("  python main.py test         # OSC 테스트 모드")
-            print("  python main.py --easy       # 쉬운 모드 (느린 반응)")
-            print("  python main.py --stable     # 안정 모드 (오인식 감소)")
-            print("  python main.py --expert     # 전문가 모드 (빠른 반응)")
-            print("  python main.py --help       # 도움말")
+            print("  python main.py          # 빠른 실행 (fast 모드)")
+            print("  python main.py --normal # 일반 속도")
+            print("  python main.py --ultra  # 초고속 모드")
+            print("  python main.py --help   # 도움말")
             return
             
-        elif sys.argv[1] == "--easy":
-            mode = "easy"
-            print("\n쉬운 모드로 실행합니다 (느린 반응, 높은 정확도)")
+        elif arg == "--normal":
+            mode = "normal"
+            print("\n일반 모드로 실행합니다.")
             
-        elif sys.argv[1] == "--stable":
-            mode = "stable"
-            print("\n안정 모드로 실행합니다 (오인식 최소화)")
-            
-        elif sys.argv[1] == "--expert":
-            mode = "expert"
-            print("\n전문가 모드로 실행합니다 (빠른 반응)")
+        elif arg == "--ultra":
+            mode = "ultra"
+            print("\n초고속 모드로 실행합니다 (매우 민감함).")
             
         else:
-            mode = "normal"
-            print(f"\n알 수 없는 옵션: {sys.argv[1]}. 일반 모드로 실행합니다.")
+            print(f"\n알 수 없는 옵션: {arg}. 기본 'fast' 모드로 실행합니다.")
     else:
-        mode = "normal"
-        print("\n일반 모드로 실행합니다.")
+        print("\n빠른 모드로 실행합니다.")
     
     # 선택된 모드의 설정 가져오기
     stabilizer_settings = get_stabilizer_settings(mode)
     
-    print(f"\n안정화 설정:")
-    print(f"  - 제스처 유지 시간: {stabilizer_settings['stability_window']}초")
+    print(f"\n안정화 설정 ({mode} mode):")
+    print(f"  - 제스처 유지 시간: {stabilizer_settings['stability_window']*1000:.0f}ms")
     print(f"  - 최소 신뢰도: {stabilizer_settings['confidence_threshold']*100:.0f}%")
-    print(f"  - 재사용 대기: {stabilizer_settings['cooldown_time']}초")
+    print(f"  - 재사용 대기: {stabilizer_settings['cooldown_time']*1000:.0f}ms")
     
     # 실행
     try:
@@ -135,10 +114,10 @@ def main():
         
     except IOError as e:
         print(f"\n오류: {e}")
-        print("\n해결 방법:")
-        print("1. 웹캠이 연결되어 있는지 확인")
-        print("2. 다른 프로그램이 웹캠을 사용 중인지 확인")
-        print("3. 웹캠 권한 설정 확인")
+        print("\n[해결 방법]")
+        print("1. 웹캠이 컴퓨터에 연결되어 있는지 확인하세요.")
+        print("2. 다른 프로그램(Zoom, Skype 등)이 웹캠을 사용 중인지 확인하고 종료해주세요.")
+        print("3. 운영체제 설정에서 프로그램의 웹캠 접근 권한을 확인해주세요.")
         
     except KeyboardInterrupt:
         print("\n\n프로그램이 사용자에 의해 중단되었습니다.")
@@ -146,11 +125,11 @@ def main():
     except Exception as e:
         print(f"\n치명적 오류 발생: {e}")
         logging.error("예외 발생", exc_info=True)
-        print("\n문제가 지속되면:")
-        print("1. Python 패키지가 모두 설치되어 있는지 확인")
-        print("   pip install -r requirements.txt")
-        print("2. gesture_stabilizer.py 파일이 있는지 확인")
-        print("3. 로그를 확인하여 상세 오류 내용 파악")
+        print("\n[문제 해결 가이드]")
+        print("1. 필요한 Python 패키지가 모두 설치되어 있는지 확인하세요.")
+        print("   pip install opencv-python mediapipe numpy python-osc")
+        print("2. 'gesture_recognizer.py' 파일이 'main.py'와 같은 폴더에 있는지 확인하세요.")
+        print("3. 상세한 오류 내용은 로그를 참고하세요.")
 
 if __name__ == "__main__":
     main()

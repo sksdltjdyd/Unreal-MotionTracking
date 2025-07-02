@@ -1,7 +1,7 @@
-# main.py - 닌자 마스터 실행 파일 (멀티 제스처 버전)
+# main.py - 닌자 마스터 실행 파일 (듀얼 제스처 개선 버전)
 
 """
-닌자 마스터 제스처 인식 시스템 - 멀티 제스처 개선 버전
+닌자 마스터 제스처 인식 시스템 - 듀얼 제스처 개선 버전
 실행 방법:
     python main.py          # 기본 실행 (안정화 모드)
     python main.py test     # 테스트 모드
@@ -24,50 +24,48 @@ def print_banner():
     """시작 배너 출력"""
     print("""
     ╔═══════════════════════════════════════════════════╗
-    ║      닌자 마스터 - MULTI-GESTURE EDITION            ║
+    ║      닌자 마스터 - DUAL-GESTURE EDITION           ║
     ║         Enhanced Hand Gesture                     ║
     ║            Recognition System                     ║
     ╚═══════════════════════════════════════════════════╝
     """)
     print("지원 제스처:")
     print("  • FLICK (손가락 튕기기)")
-    print("    - 검지와 중지를 붙인 상태")
+    print("    - 검지와 중지를 붙인 상태 (거리 < 0.06)")
     print("    - 아래에서 위로 빠르게 튕기기")
+    print("    - 속도 > 120 픽셀/초")
     print("    - 양손 모두 인식")
-    print("    - 위치별 액션 지원")
+    print("    - 위치별 액션 지원 (좌/중앙/우)")
     print("\n  • FIST (주먹 쥐기)")
-    print("    - 모든 손가락을 굽히기")
+    print("    - 모든 손가락 끝점이 가까워야 함 (거리 < 0.06)")
+    print("    - 4개 손가락 중 3개 이상 굽히기")
     print("    - 양손 모두 인식")
-    print("\n  • PINCH (집기)")
-    print("    - 엄지와 검지 끝을 접촉")
-    print("    - 양손 모두 인식")
-    print("    - 위치별 액션 지원")
-    print("\n위치 트래킹:")
-    print("  • LEFT   - 화면 왼쪽 영역")
-    print("  • CENTER - 화면 중앙 영역")
-    print("  • RIGHT  - 화면 오른쪽 영역")
+    print("\n위치 트래킹 (FLICK 전용):")
+    print("  • LEFT   - 화면 왼쪽 33% 영역")
+    print("  • CENTER - 화면 중앙 34% 영역")
+    print("  • RIGHT  - 화면 오른쪽 33% 영역")
     print("\n조작법:")
     print("  • 'q' - 종료")
     print("  • 'd' - 디버그 모드 토글")
     print("-" * 55)
 
 def get_stabilizer_settings(mode="stable"):
-    """모드별 안정화 설정 반환 - 멀티 제스처용"""
+    """모드별 안정화 설정 반환 - 듀얼 제스처 개선 버전"""
     settings = {
         "slow": {
-            "stability_window": 0.5,        # 500ms - 매우 안정적
-            "confidence_threshold": 0.25,   # 85% 신뢰도 - 매우 엄격
-            "cooldown_time": 0.1           # 1000ms 쿨다운
+            "stability_window": 0.3,        # 300ms - 더 안정적
+            "confidence_threshold": 0.7,    # 70% 신뢰도 - 더 엄격
+            "cooldown_time": 0.5           # 500ms 쿨다운
         },
         "stable": {
-            "stability_window": 0.3,        # 300ms - 안정적 (기본)
-            "confidence_threshold": 0.25,   # 75% 신뢰도
-            "cooldown_time": 0.1           # 600ms 쿨다운
+            "stability_window": 0.1,        # 100ms - 빠른 반응 (기본)
+            "confidence_threshold": 0.6,    # 60% 신뢰도
+            "cooldown_time": 0.2           # 200ms 쿨다운
         },
         "fast": {
-            "stability_window": 0.15,       # 150ms - 빠름
-            "confidence_threshold": 0.25,   # 65% 신뢰도
-            "cooldown_time": 0.1           # 300ms 쿨다운
+            "stability_window": 0.05,       # 50ms - 매우 빠름
+            "confidence_threshold": 0.5,    # 50% 신뢰도
+            "cooldown_time": 0.1           # 100ms 쿨다운
         }
     }
     return settings.get(mode, settings["stable"])
@@ -76,18 +74,23 @@ def print_gesture_tips():
     """제스처별 팁 출력"""
     print("\n💡 제스처 팁:")
     print("\n[FLICK - 표창 던지기]")
-    print("  • 검지와 중지를 확실히 붙이세요")
-    print("  • 아래에서 위로 빠르게 튕기세요")
-    print("  • 수직 움직임이 60% 이상이어야 합니다")
+    print("  • 검지와 중지를 확실히 붙이세요 (거리 < 0.06)")
+    print("  • 아래에서 위로 빠르게 튕기세요 (속도 > 120)")
+    print("  • 수직 움직임이 40% 이상이어야 합니다")
+    print("  • 각도 허용치: ±35°")
+    print("  • 우선순위가 높아 FIST보다 먼저 인식됩니다")
     
     print("\n[FIST - 주먹 방어]")
+    print("  • 모든 손가락 끝을 모으세요 (최대 거리 < 0.06)")
     print("  • 엄지를 제외한 4개 손가락을 굽히세요")
     print("  • 3개 이상 손가락이 굽혀져야 인식됩니다")
+    print("  • FLICK 동작 중에는 인식되지 않습니다")
     
-    print("\n[PINCH - 특수 공격]")
-    print("  • 엄지와 검지 끝을 가까이 하세요")
-    print("  • 나머지 손가락은 펴는 것이 좋습니다")
-    print("  • 거리가 0.045 이하여야 합니다")
+    print("\n[개선사항]")
+    print("  • 반응 시간 대폭 단축 (100ms 이내)")
+    print("  • FLICK 인식율 향상 (더 낮은 임계값)")
+    print("  • FIST 정확도 향상 (손가락 거리 체크)")
+    print("  • 제스처 중첩 방지 (우선순위 시스템)")
 
 def main():
     """메인 함수"""
@@ -116,11 +119,11 @@ def main():
             
         elif sys.argv[1] == "--slow":
             mode = "slow"
-            print("\n느린 모드로 실행합니다 (매우 안정적)")
+            print("\n느린 모드로 실행합니다 (더 안정적)")
             
         elif sys.argv[1] == "--fast":
             mode = "fast"
-            print("\n빠른 모드로 실행합니다 (덜 안정적)")
+            print("\n빠른 모드로 실행합니다 (매우 빠른 반응)")
             
         else:
             mode = "stable"

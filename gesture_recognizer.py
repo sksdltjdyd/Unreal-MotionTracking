@@ -500,14 +500,7 @@ class NinjaGestureRecognizer:
         return False, None, 0.0, position
 
     def detect_fist(self, landmarks):
-        """주먹 쥐기 감지 - 손가락 끝점 거리 조건 추가"""
-        # 손가락 끝점들이 모두 가까운지 확인
-        all_tips_close, avg_distance, max_distance = self.check_all_finger_tips_close(landmarks)
-        
-        if not all_tips_close:
-            return False, 0.0
-        
-        # 각도도 함께 확인
+        """주먹 쥐기 감지 - 각도 기반"""
         angles = self.calculate_finger_angles(landmarks)
         bent_fingers = 0
         total_fingers = 0
@@ -519,15 +512,10 @@ class NinjaGestureRecognizer:
                 if angles[finger] < Config.FIST_ANGLE_THRESHOLD:
                     bent_fingers += 1
         
-        # 4개 손가락 중 3개 이상이 굽혀져 있고, 손가락 끝이 모두 가까워야 함
-        if total_fingers >= 4 and bent_fingers >= 3 and all_tips_close:
-            # 신뢰도 계산: 굽힌 손가락 비율과 손가락 거리를 모두 고려
-            angle_score = (bent_fingers / total_fingers) * 0.5
-            distance_score = (1.0 - (max_distance / Config.FIST_FINGER_DISTANCE_THRESHOLD)) * 0.5
-            confidence = 0.5 + angle_score + distance_score
-            confidence = min(confidence, 1.0)
-            
-            logger.info(f"Fist detected! Bent fingers: {bent_fingers}/4, Max distance: {max_distance:.3f}")
+        # 4개 손가락 중 3개 이상이 굽혀져 있으면 주먹
+        if total_fingers >= 4 and bent_fingers >= 3:
+            confidence = 0.7 + (bent_fingers / total_fingers) * 0.3
+            logger.info(f"Fist detected! Bent fingers: {bent_fingers}/4")
             return True, confidence
         
         return False, 0.0
@@ -687,23 +675,18 @@ class NinjaGestureRecognizer:
                                 (index_pos[1] + middle_pos[1]) // 2 - 20), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-                    # FIST: 모든 손가락 끝점 거리 시각화
-                    all_close, avg_dist, max_dist = self.check_all_finger_tips_close(landmarks)
-                    if all_close:
-                        # 손가락 끝점들을 연결하는 선 그리기
-                        finger_tips = [self.INDEX_TIP, self.MIDDLE_TIP, self.RING_TIP, self.PINKY_TIP]
-                        for i in range(len(finger_tips)):
-                            for j in range(i + 1, len(finger_tips)):
-                                tip1 = landmarks[finger_tips[i]]
-                                tip2 = landmarks[finger_tips[j]]
-                                pos1 = (int(tip1.x * w), int(tip1.y * h))
-                                pos2 = (int(tip2.x * w), int(tip2.y * h))
-                                cv2.line(frame_to_draw_on, pos1, pos2, (0, 255, 0), 1)
-                        
+                    # FIST: 손가락 굽힘 상태 시각화
+                    angles = self.calculate_finger_angles(landmarks)
+                    bent_count = 0
+                    for finger in ['index', 'middle', 'ring', 'pinky']:
+                        if finger in angles and angles[finger] < Config.FIST_ANGLE_THRESHOLD:
+                            bent_count += 1
+                    
+                    if bent_count >= 3:
                         # FIST READY 표시
                         wrist = landmarks[self.WRIST]
                         wrist_pos = (int(wrist.x * w), int(wrist.y * h) - 40)
-                        cv2.putText(frame_to_draw_on, "FIST RDY", wrist_pos, 
+                        cv2.putText(frame_to_draw_on, f"FIST RDY ({bent_count}/4)", wrist_pos, 
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
                     # 제스처 인식 및 전송
@@ -850,7 +833,7 @@ class NinjaMasterHandTracker:
         guide_y += 30
         gestures_info = [
             ("FLICK", "Index-Mid Together + Fast Upward", (0, 255, 0)),
-            ("FIST", "All Finger Tips Close + Bent", (0, 200, 255))
+            ("FIST", "Bend 3+ Fingers (Angle Based)", (0, 200, 255))
         ]
         
         for i, (name, desc, color) in enumerate(gestures_info):
@@ -862,7 +845,7 @@ class NinjaMasterHandTracker:
         info_y = guide_y + 60
         cv2.putText(frame, f"Flick Dist: <{Config.FLICK_FINGER_DISTANCE_THRESHOLD:.3f} | Speed: >{Config.FLICK_SPEED_THRESHOLD}", 
                     (10, info_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
-        cv2.putText(frame, f"Fist Dist: <{Config.FIST_FINGER_DISTANCE_THRESHOLD:.3f} | Cooldown: {Config.DEFAULT_COOLDOWN_TIME}s", 
+        cv2.putText(frame, f"Fist Angle: <{Config.FIST_ANGLE_THRESHOLD}° | Cooldown: {Config.DEFAULT_COOLDOWN_TIME}s", 
                     (10, info_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
 
         # 하단 정보
@@ -875,7 +858,7 @@ class NinjaMasterHandTracker:
         logger.info("Improvements:")
         logger.info("- Faster response time (0.1s stability, 0.2s cooldown)")
         logger.info("- Better FLICK detection (lower thresholds)")
-        logger.info("- FIST requires all finger tips to be close")
+        logger.info("- Simple FIST detection (angle based only)")
         logger.info("- Priority: FLICK > FIST (prevents overlap)")
         
         try:
@@ -893,7 +876,7 @@ class NinjaMasterHandTracker:
                     self.draw_debug_info(processed_display_frame, current_fps, current_debug_messages)
                 
                 # 창 크기를 화면에 맞게 조절하여 표시
-                window_name = "Ninja Master - Enhanced"
+                window_name = "Ninja Master - Simple FIST"
                 cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
                 cv2.resizeWindow(window_name, 640, 360)
                 cv2.imshow(window_name, processed_display_frame)
@@ -953,7 +936,7 @@ def test_mode():
                     if gesture == "flick":
                         print("  (빠른 반응, 더 낮은 임계값)")
                     elif gesture == "fist":
-                        print("  (모든 손가락 끝이 가까워야 함)")
+                        print("  (간단한 각도 기반 인식)")
                     
                     # OSC 메시지 전송
                     tester.client.send_message("/ninja/gesture/type", gesture)
@@ -1014,9 +997,9 @@ if __name__ == "__main__":
         print("    - 속도 임계값: 150 → 120")
         print("    - 수직 비율: 0.5 → 0.4")
         print("    - 손가락 거리: 0.05 → 0.06")
-        print("  • FIST 정확도 향상:")
-        print("    - 4개 손가락 끝점이 모두 가까워야 인식")
-        print("    - 최대 거리 < 0.06")
+        print("  • FIST 인식 단순화:")
+        print("    - 각도 기반만 사용 (< 90°)")
+        print("    - 3개 이상 손가락 굽힘")
         print("  • 제스처 우선순위: FLICK > FIST (중첩 방지)")
         print("\n지원 제스처:")
         print("  • FLICK: 검지-중지 붙이고 위로 빠르게")

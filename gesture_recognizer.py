@@ -49,25 +49,26 @@ class Config:
     Y_OFFSET_CORRECTION = 0.1
 
     # 제스처 임계값 - FLICK 인식 개선을 위해 조정
-    FLICK_SPEED_THRESHOLD = 150      # 200에서 150으로 하향 (더 낮은 속도도 인식)
-    FLICK_VERTICAL_RATIO = 0.5        # 0.6에서 0.5로 하향 (수직 움직임 비율 완화)
+    FLICK_SPEED_THRESHOLD = 120      # 150에서 120으로 더 하향 (더 민감하게)
+    FLICK_VERTICAL_RATIO = 0.4        # 0.5에서 0.4로 하향 (수직 움직임 비율 더 완화)
     FIST_ANGLE_THRESHOLD = 90         # 주먹 인식 각도
+    FIST_FINGER_DISTANCE_THRESHOLD = 0.06  # 주먹 손가락 끝점 거리 임계값 추가
 
     # Flick 정확도 - 검지와 중지 거리 (더 관대하게)
-    FLICK_FINGER_DISTANCE_THRESHOLD = 0.05  # 0.035에서 0.05로 상향
+    FLICK_FINGER_DISTANCE_THRESHOLD = 0.06  # 0.05에서 0.06으로 상향
 
     # 안정화 설정 - FLICK을 위해 더 빠르게
-    DEFAULT_STABILITY_WINDOW = 0.2      # 0.3에서 0.2로 하향
-    DEFAULT_CONFIDENCE_THRESHOLD = 0.65  # 0.75에서 0.65로 하향
-    DEFAULT_COOLDOWN_TIME = 0.4          # 0.6에서 0.4로 하향
+    DEFAULT_STABILITY_WINDOW = 0.1      # 0.2에서 0.1로 더 하향
+    DEFAULT_CONFIDENCE_THRESHOLD = 0.6  # 0.65에서 0.6으로 하향
+    DEFAULT_COOLDOWN_TIME = 0.2          # 0.4에서 0.2로 더 하향
 
     # 스무딩 설정
-    SMOOTHING_BUFFER_SIZE = 7  # 5에서 7로 증가
+    SMOOTHING_BUFFER_SIZE = 5  # 7에서 5로 감소 (더 빠른 반응)
     FPS_BUFFER_SIZE = 30
 
     # 노이즈 필터링
-    MOVEMENT_THRESHOLD = 10  # 15에서 10으로 하향 (더 작은 움직임도 감지)
-    GESTURE_CHANGE_THRESHOLD = 0.5  # 0.6에서 0.5로 하향
+    MOVEMENT_THRESHOLD = 8  # 10에서 8로 하향 (더 작은 움직임도 감지)
+    GESTURE_CHANGE_THRESHOLD = 0.4  # 0.5에서 0.4로 하향
     POSITION_CHANGE_THRESHOLD = 0.2
 
     # 위치 트래킹 설정
@@ -76,8 +77,8 @@ class Config:
     POSITION_TRACKING_SMOOTHING = 0.7
 
     # FLICK 개선을 위한 추가 설정
-    FLICK_ANGLE_TOLERANCE = 30  # 수직에서 벗어날 수 있는 각도
-    FLICK_MIN_DISTANCE = 30     # 최소 이동 거리 (픽셀)
+    FLICK_ANGLE_TOLERANCE = 35  # 30에서 35로 증가 (더 관대하게)
+    FLICK_MIN_DISTANCE = 25     # 30에서 25로 감소 (더 작은 움직임도 인식)
 
 
 class EnhancedStabilizer:
@@ -89,11 +90,11 @@ class EnhancedStabilizer:
         self.last_gesture_time = {}
         self.current_gesture = "none"
         self.current_gesture_start = 0
-        self.gesture_buffer = deque(maxlen=6)  # 8에서 6으로 감소 (더 빠른 반응)
+        self.gesture_buffer = deque(maxlen=4)  # 6에서 4로 더 감소 (더 빠른 반응)
         self.position_buffer = deque(maxlen=5)
         self.last_valid_position = "center"
         self.last_sent_gesture = "none"
-        self.confidence_buffer = deque(maxlen=5)
+        self.confidence_buffer = deque(maxlen=3)  # 5에서 3으로 감소
 
     def should_send_gesture(self, gesture_type, confidence, hand_label, position=None):
         current_time = time.time()
@@ -118,20 +119,20 @@ class EnhancedStabilizer:
                     position_counts[pos] = position_counts.get(pos, 0) + 1
                 most_common_position = max(position_counts, key=position_counts.get)
                 
-                if position_counts[most_common_position] >= len(self.position_buffer) * 0.6:  # 0.7에서 0.6으로
+                if position_counts[most_common_position] >= len(self.position_buffer) * 0.5:  # 0.6에서 0.5로
                     self.last_valid_position = most_common_position
             position = self.last_valid_position
 
         self.gesture_buffer.append(gesture_type)
 
-        # 버퍼의 60% 이상이 같은 제스처면 인식 (75%에서 하향)
-        if len(self.gesture_buffer) >= 4:  # 6에서 4로 감소
+        # 버퍼의 50% 이상이 같은 제스처면 인식 (60%에서 하향)
+        if len(self.gesture_buffer) >= 2:  # 4에서 2로 감소
             gesture_count = {}
             for g in self.gesture_buffer:
                 gesture_count[g] = gesture_count.get(g, 0) + 1
 
             most_common = max(gesture_count, key=gesture_count.get)
-            if gesture_count[most_common] >= len(self.gesture_buffer) * 0.6:  # 0.75에서 0.6으로
+            if gesture_count[most_common] >= len(self.gesture_buffer) * 0.5:  # 0.6에서 0.5로
                 gesture_type = most_common
             else:
                 return False, None
@@ -238,8 +239,8 @@ class NinjaGestureRecognizer:
         self.angle_correction_matrix = self._create_angle_correction_matrix()
         
         # 추가 버퍼 - FLICK 개선
-        self.velocity_buffer = deque(maxlen=5)  # 3에서 5로 증가
-        self.flick_history = {"Left": deque(maxlen=10), "Right": deque(maxlen=10)}  # 새로운 히스토리 버퍼
+        self.velocity_buffer = deque(maxlen=3)  # 5에서 3으로 감소 (더 빠른 반응)
+        self.flick_history = {"Left": deque(maxlen=5), "Right": deque(maxlen=5)}  # 10에서 5로 감소
 
         logger.info(f"Ninja Gesture Recognizer (Dual-Gesture) initialized - OSC: {osc_ip or Config.OSC_IP}:{osc_port or Config.OSC_PORT}")
 
@@ -263,7 +264,7 @@ class NinjaGestureRecognizer:
             self.smoothed_landmarks[hand_label] = current_landmarks
             return current_landmarks
 
-        alpha = 0.7  # 0.6에서 0.7로 증가 (더 부드럽게)
+        alpha = 0.8  # 0.7에서 0.8로 증가 (현재 값에 더 가중치)
         smoothed = []
         for i, (curr, prev) in enumerate(zip(current_landmarks, self.smoothed_landmarks[hand_label])):
             smoothed_x = alpha * curr.x + (1 - alpha) * prev.x
@@ -354,6 +355,30 @@ class NinjaGestureRecognizer:
 
         return distance < Config.FLICK_FINGER_DISTANCE_THRESHOLD, distance
 
+    def check_all_finger_tips_close(self, landmarks):
+        """모든 손가락 끝점이 가까운지 체크 (Fist용)"""
+        finger_tips = [self.INDEX_TIP, self.MIDDLE_TIP, self.RING_TIP, self.PINKY_TIP]
+        
+        # 손가락 끝점들 간의 평균 거리 계산
+        distances = []
+        for i in range(len(finger_tips)):
+            for j in range(i + 1, len(finger_tips)):
+                tip1 = landmarks[finger_tips[i]]
+                tip2 = landmarks[finger_tips[j]]
+                distance = self.calculate_distance(
+                    [tip1.x, tip1.y],
+                    [tip2.x, tip2.y]
+                )
+                distances.append(distance)
+        
+        avg_distance = np.mean(distances) if distances else 1.0
+        max_distance = np.max(distances) if distances else 1.0
+        
+        # 모든 손가락이 가까운지 확인
+        all_close = max_distance < Config.FIST_FINGER_DISTANCE_THRESHOLD
+        
+        return all_close, avg_distance, max_distance
+
     def detect_flick(self, current_landmarks, hand_label, img_width, img_height):
         """손가락 튕기기 감지 - 개선된 버전"""
         if self.prev_landmarks[hand_label] is None:
@@ -431,7 +456,7 @@ class NinjaGestureRecognizer:
             
             # 평균 속도 계산
             if len(self.velocity_buffer) >= 2:
-                avg_velocity = np.mean(list(self.velocity_buffer)[-3:])  # 최근 3개만 사용
+                avg_velocity = np.mean(list(self.velocity_buffer)[-2:])  # 최근 2개만 사용
             else:
                 avg_velocity = best_candidate['velocity']
 
@@ -444,15 +469,15 @@ class NinjaGestureRecognizer:
 
             # 최근 패턴 분석
             recent_history = [h for h in self.flick_history[hand_label] 
-                            if current_time - h['time'] < 0.5]
+                            if current_time - h['time'] < 0.3]  # 0.5에서 0.3으로 감소
             
             # 속도 임계값 동적 조정
             dynamic_threshold = Config.FLICK_SPEED_THRESHOLD
-            if len(recent_history) > 2:
+            if len(recent_history) > 1:  # 2에서 1로 감소
                 # 최근에 빠른 움직임이 있었다면 임계값을 낮춤
                 max_recent_velocity = max(h['velocity'] for h in recent_history)
-                if max_recent_velocity > Config.FLICK_SPEED_THRESHOLD * 1.5:
-                    dynamic_threshold *= 0.8
+                if max_recent_velocity > Config.FLICK_SPEED_THRESHOLD * 1.2:  # 1.5에서 1.2로
+                    dynamic_threshold *= 0.7  # 0.8에서 0.7로
 
             # 최종 조건 확인
             if avg_velocity > dynamic_threshold:
@@ -461,12 +486,12 @@ class NinjaGestureRecognizer:
                 best_vertical_ratio = best_candidate['vertical_ratio']
 
                 # 신뢰도 계산 개선
-                velocity_score = min((avg_velocity - dynamic_threshold) / 500, 0.3)
+                velocity_score = min((avg_velocity - dynamic_threshold) / 400, 0.3)  # 500에서 400으로
                 vertical_score = min(best_vertical_ratio * 0.3, 0.3)
                 distance_score = min((1.0 - (finger_distance / Config.FLICK_FINGER_DISTANCE_THRESHOLD)) * 0.2, 0.2)
                 angle_score = min((1.0 - best_candidate['angle'] / Config.FLICK_ANGLE_TOLERANCE) * 0.2, 0.2)
                 
-                confidence = 0.5 + velocity_score + vertical_score + distance_score + angle_score
+                confidence = 0.6 + velocity_score + vertical_score + distance_score + angle_score  # 0.5에서 0.6으로
                 confidence = min(confidence, 1.0)
                 
                 logger.info(f"Flick detected! Velocity: {best_velocity:.1f}, Vertical: {best_vertical_ratio:.2f}, Angle: {best_candidate['angle']:.1f}°")
@@ -475,7 +500,14 @@ class NinjaGestureRecognizer:
         return False, None, 0.0, position
 
     def detect_fist(self, landmarks):
-        """주먹 쥐기 감지"""
+        """주먹 쥐기 감지 - 손가락 끝점 거리 조건 추가"""
+        # 손가락 끝점들이 모두 가까운지 확인
+        all_tips_close, avg_distance, max_distance = self.check_all_finger_tips_close(landmarks)
+        
+        if not all_tips_close:
+            return False, 0.0
+        
+        # 각도도 함께 확인
         angles = self.calculate_finger_angles(landmarks)
         bent_fingers = 0
         total_fingers = 0
@@ -487,44 +519,50 @@ class NinjaGestureRecognizer:
                 if angles[finger] < Config.FIST_ANGLE_THRESHOLD:
                     bent_fingers += 1
         
-        # 4개 손가락 중 3개 이상이 굽혀져 있으면 주먹
-        if total_fingers >= 4 and bent_fingers >= 3:
-            confidence = 0.7 + (bent_fingers / total_fingers) * 0.3
+        # 4개 손가락 중 3개 이상이 굽혀져 있고, 손가락 끝이 모두 가까워야 함
+        if total_fingers >= 4 and bent_fingers >= 3 and all_tips_close:
+            # 신뢰도 계산: 굽힌 손가락 비율과 손가락 거리를 모두 고려
+            angle_score = (bent_fingers / total_fingers) * 0.5
+            distance_score = (1.0 - (max_distance / Config.FIST_FINGER_DISTANCE_THRESHOLD)) * 0.5
+            confidence = 0.5 + angle_score + distance_score
+            confidence = min(confidence, 1.0)
+            
+            logger.info(f"Fist detected! Bent fingers: {bent_fingers}/4, Max distance: {max_distance:.3f}")
             return True, confidence
         
         return False, 0.0
 
     def recognize_gesture(self, hand_landmarks_obj, hand_label, img_shape):
-        """통합 제스처 인식 - 2가지 제스처 지원"""
+        """통합 제스처 인식 - 우선순위 변경: FLICK > FIST"""
         landmarks = self._smooth_landmarks(hand_landmarks_obj.landmark, hand_label)
         height, width = img_shape[:2]
     
         current_gesture = GestureType.NONE
         gesture_data = {"confidence": 0.0}
 
-        # 우선순위: FIST > FLICK
+        # 우선순위 변경: FLICK > FIST (중첩 방지)
         
-        # 1. FIST 검사
-        is_fist, fist_conf = self.detect_fist(landmarks)
-        if is_fist:
-            current_gesture = GestureType.FIST
+        # 1. FLICK 검사 먼저 (양손 모두)
+        is_flick, flick_dir, flick_speed, flick_position = self.detect_flick(
+            landmarks, hand_label, width, height
+        )
+        if is_flick:
+            current_gesture = GestureType.FLICK
             gesture_data = {
-                "confidence": fist_conf,
-                "action": "activate_fist"
+                "direction": flick_dir,
+                "speed": flick_speed,
+                "confidence": 0.85,
+                "action": "throw_shuriken",
+                "position": flick_position
             }
         else:
-            # 2. FLICK 검사 (양손 모두)
-            is_flick, flick_dir, flick_speed, flick_position = self.detect_flick(
-                landmarks, hand_label, width, height
-            )
-            if is_flick:
-                current_gesture = GestureType.FLICK
+            # 2. FLICK이 아닐 때만 FIST 검사
+            is_fist, fist_conf = self.detect_fist(landmarks)
+            if is_fist:
+                current_gesture = GestureType.FIST
                 gesture_data = {
-                    "direction": flick_dir,
-                    "speed": flick_speed,
-                    "confidence": 0.85,
-                    "action": "throw_shuriken",
-                    "position": flick_position
+                    "confidence": fist_conf,
+                    "action": "activate_fist"
                 }
 
         self.prev_landmarks[hand_label] = hand_landmarks_obj.landmark
@@ -648,6 +686,25 @@ class NinjaGestureRecognizer:
                                ((index_pos[0] + middle_pos[0]) // 2 - 30, 
                                 (index_pos[1] + middle_pos[1]) // 2 - 20), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+                    # FIST: 모든 손가락 끝점 거리 시각화
+                    all_close, avg_dist, max_dist = self.check_all_finger_tips_close(landmarks)
+                    if all_close:
+                        # 손가락 끝점들을 연결하는 선 그리기
+                        finger_tips = [self.INDEX_TIP, self.MIDDLE_TIP, self.RING_TIP, self.PINKY_TIP]
+                        for i in range(len(finger_tips)):
+                            for j in range(i + 1, len(finger_tips)):
+                                tip1 = landmarks[finger_tips[i]]
+                                tip2 = landmarks[finger_tips[j]]
+                                pos1 = (int(tip1.x * w), int(tip1.y * h))
+                                pos2 = (int(tip2.x * w), int(tip2.y * h))
+                                cv2.line(frame_to_draw_on, pos1, pos2, (0, 255, 0), 1)
+                        
+                        # FIST READY 표시
+                        wrist = landmarks[self.WRIST]
+                        wrist_pos = (int(wrist.x * w), int(wrist.y * h) - 40)
+                        cv2.putText(frame_to_draw_on, "FIST RDY", wrist_pos, 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
                     # 제스처 인식 및 전송
                     raw_gesture_type, raw_gesture_data = self.recognize_gesture(
@@ -786,14 +843,14 @@ class NinjaMasterHandTracker:
             y_offset += 30
         
         # 제스처 가이드
-        guide_y = height - 180
-        cv2.putText(frame, "== FLICK IMPROVED MODE ==", (10, guide_y), 
+        guide_y = height - 200
+        cv2.putText(frame, "== ENHANCED DUAL GESTURE MODE ==", (10, guide_y), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
         
         guide_y += 30
         gestures_info = [
-            ("FLICK", "Fingers Together + Upward (More Flexible)", (0, 255, 0)),
-            ("FIST", "Close All Fingers (Both Hands)", (0, 200, 255))
+            ("FLICK", "Index-Mid Together + Fast Upward", (0, 255, 0)),
+            ("FIST", "All Finger Tips Close + Bent", (0, 200, 255))
         ]
         
         for i, (name, desc, color) in enumerate(gestures_info):
@@ -802,9 +859,11 @@ class NinjaMasterHandTracker:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
 
         # 임계값 정보
-        info_y = guide_y + 70
-        cv2.putText(frame, f"Dist: {Config.FLICK_FINGER_DISTANCE_THRESHOLD:.3f} | Speed: {Config.FLICK_SPEED_THRESHOLD} | Vert: {Config.FLICK_VERTICAL_RATIO:.1f}", 
+        info_y = guide_y + 60
+        cv2.putText(frame, f"Flick Dist: <{Config.FLICK_FINGER_DISTANCE_THRESHOLD:.3f} | Speed: >{Config.FLICK_SPEED_THRESHOLD}", 
                     (10, info_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
+        cv2.putText(frame, f"Fist Dist: <{Config.FIST_FINGER_DISTANCE_THRESHOLD:.3f} | Cooldown: {Config.DEFAULT_COOLDOWN_TIME}s", 
+                    (10, info_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
 
         # 하단 정보
         cv2.putText(frame, "Q: Quit | D: Debug Toggle", (10, height - 10), 
@@ -812,9 +871,12 @@ class NinjaMasterHandTracker:
 
     def run(self):
         """메인 루프"""
-        logger.info("Starting Ninja Master - FLICK IMPROVED MODE...")
-        logger.info("Gestures: FLICK (more flexible), FIST")
-        logger.info("Both hands are tracked for all gestures")
+        logger.info("Starting Ninja Master - ENHANCED DUAL GESTURE MODE...")
+        logger.info("Improvements:")
+        logger.info("- Faster response time (0.1s stability, 0.2s cooldown)")
+        logger.info("- Better FLICK detection (lower thresholds)")
+        logger.info("- FIST requires all finger tips to be close")
+        logger.info("- Priority: FLICK > FIST (prevents overlap)")
         
         try:
             while True:
@@ -831,7 +893,7 @@ class NinjaMasterHandTracker:
                     self.draw_debug_info(processed_display_frame, current_fps, current_debug_messages)
                 
                 # 창 크기를 화면에 맞게 조절하여 표시
-                window_name = "Ninja Master - Flick Improved"
+                window_name = "Ninja Master - Enhanced"
                 cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
                 cv2.resizeWindow(window_name, 640, 360)
                 cv2.imshow(window_name, processed_display_frame)
@@ -867,7 +929,7 @@ def test_mode():
     try:
         from test_osc_communication import OSCTester
         
-        logger.info("=== OSC 테스트 모드 (Flick Improved) ===")
+        logger.info("=== OSC 테스트 모드 (Enhanced Dual Gesture) ===")
         tester = OSCTester()
         tester.start_server()
 
@@ -889,9 +951,9 @@ def test_mode():
                     print(f"\n- {gesture.upper()}")
                     
                     if gesture == "flick":
-                        print("  (더 유연한 인식)")
+                        print("  (빠른 반응, 더 낮은 임계값)")
                     elif gesture == "fist":
-                        print("  (주먹 쥐기)")
+                        print("  (모든 손가락 끝이 가까워야 함)")
                     
                     # OSC 메시지 전송
                     tester.client.send_message("/ninja/gesture/type", gesture)
@@ -902,7 +964,7 @@ def test_mode():
                     if has_position:
                         tester.client.send_message("/ninja/gesture/position", "center")
                     
-                    time.sleep(2)
+                    time.sleep(1.5)
 
             elif choice == "2":
                 positions = ["left", "center", "right"]
@@ -916,7 +978,7 @@ def test_mode():
                     tester.client.send_message("/ninja/gesture/confidence", 0.85)
                     tester.client.send_message("/ninja/gesture/hand", "Right")
                     tester.client.send_message("/ninja/gesture/position", pos)
-                    time.sleep(1.5)
+                    time.sleep(1.0)
 
             elif choice == "3":
                 break
@@ -936,26 +998,29 @@ if __name__ == "__main__":
     if is_test_mode:
         test_mode()
     else:
-        # 개선된 FLICK 설정
+        # 개선된 설정
         custom_stabilizer_settings = {
-            "stability_window": 0.2,        # 더 빠른 반응
-            "confidence_threshold": 0.65,   # 더 낮은 임계값
-            "cooldown_time": 0.4            # 더 짧은 쿨다운
+            "stability_window": 0.1,        # 매우 빠른 반응 (0.2에서 0.1로)
+            "confidence_threshold": 0.6,    # 더 낮은 임계값 (0.65에서 0.6으로)
+            "cooldown_time": 0.2            # 매우 짧은 쿨다운 (0.4에서 0.2로)
         }
         
         print("\n" + "=" * 60)
-        print("      닌자 마스터 - FLICK 개선 버전")
+        print("      닌자 마스터 - 향상된 듀얼 제스처 모드")
         print("=" * 60)
-        print("\n개선사항:")
-        print("  • 더 관대한 손가락 거리 인식 (0.035 → 0.05)")
-        print("  • 더 낮은 속도 임계값 (200 → 150)")
-        print("  • 더 유연한 수직 비율 (60% → 50%)")
-        print("  • 각도 허용치 추가 (±30°)")
-        print("  • 동적 임계값 조정")
-        print("  • 개선된 스무딩과 버퍼링")
+        print("\n주요 개선사항:")
+        print("  • 반응 시간 대폭 단축 (0.1초 안정화, 0.2초 쿨다운)")
+        print("  • FLICK 인식율 향상:")
+        print("    - 속도 임계값: 150 → 120")
+        print("    - 수직 비율: 0.5 → 0.4")
+        print("    - 손가락 거리: 0.05 → 0.06")
+        print("  • FIST 정확도 향상:")
+        print("    - 4개 손가락 끝점이 모두 가까워야 인식")
+        print("    - 최대 거리 < 0.06")
+        print("  • 제스처 우선순위: FLICK > FIST (중첩 방지)")
         print("\n지원 제스처:")
-        print("  • FLICK: 검지-중지 붙이고 위로 튕기기 (양손)")
-        print("  • FIST: 주먹 쥐기 (양손)")
+        print("  • FLICK: 검지-중지 붙이고 위로 빠르게")
+        print("  • FIST: 모든 손가락 끝을 모아서 주먹")
         print("\n조작법:")
         print("  • Q - 종료")
         print("  • D - 디버그 정보 ON/OFF")

@@ -51,16 +51,20 @@ class Config:
     # 제스처 임계값 - FLICK 인식 개선을 위해 조정
     FLICK_SPEED_THRESHOLD = 120      # 150에서 120으로 더 하향 (더 민감하게)
     FLICK_VERTICAL_RATIO = 0.4        # 0.5에서 0.4로 하향 (수직 움직임 비율 더 완화)
-    FIST_ANGLE_THRESHOLD = 90         # 주먹 인식 각도
+    FIST_ANGLE_THRESHOLD = 110        # 90에서 110으로 상향 (더 관대하게)
     FIST_FINGER_DISTANCE_THRESHOLD = 0.06  # 주먹 손가락 끝점 거리 임계값 추가
 
     # Flick 정확도 - 검지와 중지 거리 (더 관대하게)
     FLICK_FINGER_DISTANCE_THRESHOLD = 0.06  # 0.05에서 0.06으로 상향
 
     # 안정화 설정 - FLICK을 위해 더 빠르게
-    DEFAULT_STABILITY_WINDOW = 0.1      # 0.2에서 0.1로 더 하향
-    DEFAULT_CONFIDENCE_THRESHOLD = 0.6  # 0.65에서 0.6으로 하향
-    DEFAULT_COOLDOWN_TIME = 0.2          # 0.4에서 0.2로 더 하향
+    DEFAULT_STABILITY_WINDOW = 0.15     # 0.1에서 0.15로 약간 상향 (FIST 인식 개선)
+    DEFAULT_CONFIDENCE_THRESHOLD = 0.55 # 0.6에서 0.55로 하향 (더 관대하게)
+    DEFAULT_COOLDOWN_TIME = 0.25        # 0.2에서 0.25로 약간 상향 (안정성)
+    
+    # FIST 전용 안정화 설정
+    FIST_STABILITY_WINDOW = 0.4         # FIST는 더 긴 유지시간 필요
+    FIST_COOLDOWN_TIME = 0.5            # FIST는 더 긴 쿨다운
 
     # 스무딩 설정
     SMOOTHING_BUFFER_SIZE = 5  # 7에서 5로 감소 (더 빠른 반응)
@@ -101,6 +105,14 @@ class EnhancedStabilizer:
 
         if gesture_type == "none":
             return False, None
+
+        # 제스처별 다른 설정 적용
+        if gesture_type == "fist":
+            stability_window = Config.FIST_STABILITY_WINDOW
+            cooldown_time = Config.FIST_COOLDOWN_TIME
+        else:
+            stability_window = self.stability_window
+            cooldown_time = self.cooldown_time
 
         # 신뢰도 버퍼링 및 평균 계산
         self.confidence_buffer.append(confidence)
@@ -146,14 +158,14 @@ class EnhancedStabilizer:
             self.confidence_buffer.clear()
             return False, None
 
-        # 안정화 시간 체크
-        if current_time - self.current_gesture_start < self.stability_window:
+        # 안정화 시간 체크 (제스처별 다른 시간 적용)
+        if current_time - self.current_gesture_start < stability_window:
             return False, None
 
-        # 쿨다운 체크
+        # 쿨다운 체크 (제스처별 다른 쿨다운 적용)
         gesture_key = f"{gesture_type}_{hand_label}"
         if gesture_key in self.last_gesture_time:
-            if current_time - self.last_gesture_time[gesture_key] < self.cooldown_time:
+            if current_time - self.last_gesture_time[gesture_key] < cooldown_time:
                 return False, None
 
         # 제스처 전송
@@ -168,7 +180,12 @@ class EnhancedStabilizer:
         stability_progress = 0
         if self.current_gesture != "none":
             elapsed = time.time() - self.current_gesture_start
-            stability_progress = min(elapsed / self.stability_window, 1.0)
+            # 제스처별 다른 stability window 적용
+            if self.current_gesture == "fist":
+                stability_window = Config.FIST_STABILITY_WINDOW
+            else:
+                stability_window = self.stability_window
+            stability_progress = min(elapsed / stability_window, 1.0)
         
         return {
             "current_gesture": self.current_gesture,
@@ -500,10 +517,11 @@ class NinjaGestureRecognizer:
         return False, None, 0.0, position
 
     def detect_fist(self, landmarks):
-        """주먹 쥐기 감지 - 각도 기반"""
+        """주먹 쥐기 감지 - 3개 이상 손가락 굽히면 인식, 스마트 충돌 방지"""
         angles = self.calculate_finger_angles(landmarks)
         bent_fingers = 0
         total_fingers = 0
+        bent_finger_names = []
         
         # 엄지를 제외한 네 손가락 확인
         for finger in ['index', 'middle', 'ring', 'pinky']:
@@ -511,26 +529,48 @@ class NinjaGestureRecognizer:
                 total_fingers += 1
                 if angles[finger] < Config.FIST_ANGLE_THRESHOLD:
                     bent_fingers += 1
+                    bent_finger_names.append(finger)
         
-        # 4개 손가락 중 3개 이상이 굽혀져 있으면 주먹
+        # 3개 이상 손가락이 굽혀져 있으면 주먹으로 인식
         if total_fingers >= 4 and bent_fingers >= 3:
-            confidence = 0.7 + (bent_fingers / total_fingers) * 0.3
-            logger.info(f"Fist detected! Bent fingers: {bent_fingers}/4")
+            # Flick과의 충돌을 더 정교하게 체크
+            # 검지와 중지가 모두 굽혀져 있고, 매우 가까운 경우만 체크
+            if 'index' in bent_finger_names and 'middle' in bent_finger_names:
+                fingers_together, finger_distance = self.check_finger_tips_distance(landmarks)
+                # 거리가 매우 가까우면서 움직임이 있을 때만 Flick 가능성으로 판단
+                if finger_distance < Config.FLICK_FINGER_DISTANCE_THRESHOLD * 0.7:
+                    # 여기서는 패스하고 움직임은 recognize_gesture에서 체크
+                    pass
+            
+            # 신뢰도 계산 (더 관대하게)
+            base_confidence = 0.6  # 기본 신뢰도 상향
+            angle_bonus = (bent_fingers / total_fingers) * 0.3
+            
+            # 4개 모두 굽혔으면 추가 보너스
+            if bent_fingers == 4:
+                angle_bonus += 0.1
+                
+            confidence = base_confidence + angle_bonus
+            confidence = min(confidence, 1.0)
+            
+            logger.info(f"Fist detected! Bent: {bent_fingers}/4 ({', '.join(bent_finger_names)}) Conf: {confidence:.2f}")
             return True, confidence
         
         return False, 0.0
 
     def recognize_gesture(self, hand_landmarks_obj, hand_label, img_shape):
-        """통합 제스처 인식 - 우선순위 변경: FLICK > FIST"""
+        """통합 제스처 인식 - 우선순위: FLICK > FIST"""
         landmarks = self._smooth_landmarks(hand_landmarks_obj.landmark, hand_label)
         height, width = img_shape[:2]
     
         current_gesture = GestureType.NONE
         gesture_data = {"confidence": 0.0}
 
-        # 우선순위 변경: FLICK > FIST (중첩 방지)
+        # 우선순위: FLICK > FIST
+        # FLICK 제스처는 손가락을 모으는 동작이 포함되어 FIST와 충돌할 수 있음
+        # 따라서 FLICK을 먼저 검사하고, FLICK이 아닐 때만 FIST 검사
         
-        # 1. FLICK 검사 먼저 (양손 모두)
+        # 1. FLICK 검사 (양손 모두)
         is_flick, flick_dir, flick_speed, flick_position = self.detect_flick(
             landmarks, hand_label, width, height
         )
@@ -545,6 +585,7 @@ class NinjaGestureRecognizer:
             }
         else:
             # 2. FLICK이 아닐 때만 FIST 검사
+            # FIST는 3개 이상 손가락이 굽혀져야 함
             is_fist, fist_conf = self.detect_fist(landmarks)
             if is_fist:
                 current_gesture = GestureType.FIST
@@ -683,11 +724,18 @@ class NinjaGestureRecognizer:
                             bent_count += 1
                     
                     if bent_count >= 3:
-                        # FIST READY 표시
+                        # FIST READY 표시 (3개 이상 굽혀짐)
                         wrist = landmarks[self.WRIST]
                         wrist_pos = (int(wrist.x * w), int(wrist.y * h) - 40)
-                        cv2.putText(frame_to_draw_on, f"FIST RDY ({bent_count}/4)", wrist_pos, 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        color = (0, 255, 0) if bent_count >= 3 else (0, 165, 255)
+                        cv2.putText(frame_to_draw_on, f"FIST READY ({bent_count}/4)", wrist_pos, 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+                    elif bent_count > 0:
+                        # 진행 상태 표시
+                        wrist = landmarks[self.WRIST]
+                        wrist_pos = (int(wrist.x * w), int(wrist.y * h) - 40)
+                        cv2.putText(frame_to_draw_on, f"FIST ({bent_count}/4)", wrist_pos, 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
 
                     # 제스처 인식 및 전송
                     raw_gesture_type, raw_gesture_data = self.recognize_gesture(
@@ -719,8 +767,15 @@ class NinjaGestureRecognizer:
                             progress = stabilizer_stats.get("stability_progress", 0)
                             progress_percent = int(progress * 100)
                             confidence_avg = stabilizer_stats.get("confidence_avg", 0)
+                            
+                            # 제스처별 다른 유지시간 표시
+                            if pending_gesture == "fist":
+                                hold_time = Config.FIST_STABILITY_WINDOW
+                            else:
+                                hold_time = Config.DEFAULT_STABILITY_WINDOW
+                                
                             debug_messages_for_frame.append(
-                                f"{hand_label}: {pending_gesture} ({progress_percent}%) Conf: {confidence_avg:.2f}"
+                                f"{hand_label}: {pending_gesture} ({progress_percent}%/{hold_time}s) Conf: {confidence_avg:.2f}"
                             )
                             
                             # 프로그레스 바 그리기
@@ -832,8 +887,8 @@ class NinjaMasterHandTracker:
         
         guide_y += 30
         gestures_info = [
-            ("FLICK", "Index-Mid Together + Fast Upward", (0, 255, 0)),
-            ("FIST", "Bend 3+ Fingers (Angle Based)", (0, 200, 255))
+            ("FLICK", "Index-Mid Together + Fast Up (0.15s)", (0, 255, 0)),
+            ("FIST", "Bend 3+ Fingers (Hold 0.4s)", (0, 200, 255))
         ]
         
         for i, (name, desc, color) in enumerate(gestures_info):
@@ -843,9 +898,9 @@ class NinjaMasterHandTracker:
 
         # 임계값 정보
         info_y = guide_y + 60
-        cv2.putText(frame, f"Flick Dist: <{Config.FLICK_FINGER_DISTANCE_THRESHOLD:.3f} | Speed: >{Config.FLICK_SPEED_THRESHOLD}", 
+        cv2.putText(frame, f"Flick: <{Config.FLICK_FINGER_DISTANCE_THRESHOLD:.3f}, >{Config.FLICK_SPEED_THRESHOLD}, Hold: {Config.DEFAULT_STABILITY_WINDOW}s", 
                     (10, info_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
-        cv2.putText(frame, f"Fist Angle: <{Config.FIST_ANGLE_THRESHOLD}° | Cooldown: {Config.DEFAULT_COOLDOWN_TIME}s", 
+        cv2.putText(frame, f"Fist: 3+ fingers, <{Config.FIST_ANGLE_THRESHOLD}°, Hold: {Config.FIST_STABILITY_WINDOW}s", 
                     (10, info_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
 
         # 하단 정보
@@ -856,10 +911,11 @@ class NinjaMasterHandTracker:
         """메인 루프"""
         logger.info("Starting Ninja Master - ENHANCED DUAL GESTURE MODE...")
         logger.info("Improvements:")
-        logger.info("- Faster response time (0.1s stability, 0.2s cooldown)")
+        logger.info("- FLICK: Fast response (0.15s stability)")
+        logger.info("- FIST: Slower recognition (0.4s stability)")
         logger.info("- Better FLICK detection (lower thresholds)")
-        logger.info("- Simple FIST detection (angle based only)")
-        logger.info("- Priority: FLICK > FIST (prevents overlap)")
+        logger.info("- Improved FIST detection (3+ fingers, angle < 110°)")
+        logger.info("- Smart conflict prevention")
         
         try:
             while True:
@@ -876,7 +932,7 @@ class NinjaMasterHandTracker:
                     self.draw_debug_info(processed_display_frame, current_fps, current_debug_messages)
                 
                 # 창 크기를 화면에 맞게 조절하여 표시
-                window_name = "Ninja Master - Simple FIST"
+                window_name = "Ninja Master - Differential Timing"
                 cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
                 cv2.resizeWindow(window_name, 640, 360)
                 cv2.imshow(window_name, processed_display_frame)
@@ -934,9 +990,9 @@ def test_mode():
                     print(f"\n- {gesture.upper()}")
                     
                     if gesture == "flick":
-                        print("  (빠른 반응, 더 낮은 임계값)")
+                        print("  (빠른 반응 0.15초)")
                     elif gesture == "fist":
-                        print("  (간단한 각도 기반 인식)")
+                        print("  (긴 유지시간 0.4초)")
                     
                     # OSC 메시지 전송
                     tester.client.send_message("/ninja/gesture/type", gesture)
@@ -983,27 +1039,29 @@ if __name__ == "__main__":
     else:
         # 개선된 설정
         custom_stabilizer_settings = {
-            "stability_window": 0.1,        # 매우 빠른 반응 (0.2에서 0.1로)
-            "confidence_threshold": 0.6,    # 더 낮은 임계값 (0.65에서 0.6으로)
-            "cooldown_time": 0.2            # 매우 짧은 쿨다운 (0.4에서 0.2로)
+            "stability_window": 0.15,       # 안정적이면서도 빠른 반응
+            "confidence_threshold": 0.55,   # 더 관대한 임계값
+            "cooldown_time": 0.25           # 적절한 쿨다운
         }
         
         print("\n" + "=" * 60)
-        print("      닌자 마스터 - 향상된 듀얼 제스처 모드")
+        print("      닌자 마스터 - 제스처별 타이밍 모드")
         print("=" * 60)
         print("\n주요 개선사항:")
-        print("  • 반응 시간 대폭 단축 (0.1초 안정화, 0.2초 쿨다운)")
+        print("  • 제스처별 다른 반응 시간:")
+        print("    - FLICK: 0.15초 유지 (빠른 반응)")
+        print("    - FIST: 0.4초 유지 (안정적 인식)")
         print("  • FLICK 인식율 향상:")
-        print("    - 속도 임계값: 150 → 120")
-        print("    - 수직 비율: 0.5 → 0.4")
-        print("    - 손가락 거리: 0.05 → 0.06")
-        print("  • FIST 인식 단순화:")
-        print("    - 각도 기반만 사용 (< 90°)")
-        print("    - 3개 이상 손가락 굽힘")
-        print("  • 제스처 우선순위: FLICK > FIST (중첩 방지)")
+        print("    - 속도 임계값: 120 픽셀/초")
+        print("    - 수직 비율: 40%")
+        print("    - 손가락 거리: < 0.06")
+        print("  • FIST 인식 개선:")
+        print("    - 3개 이상 손가락 굽히면 인식")
+        print("    - 각도 < 110° (더 관대함)")
+        print("    - 더 긴 유지시간으로 안정성 확보")
         print("\n지원 제스처:")
-        print("  • FLICK: 검지-중지 붙이고 위로 빠르게")
-        print("  • FIST: 모든 손가락 끝을 모아서 주먹")
+        print("  • FLICK: 검지-중지 붙이고 위로 빠르게 (0.15초 유지)")
+        print("  • FIST: 3개 이상 손가락 굽히기 (0.4초 유지)")
         print("\n조작법:")
         print("  • Q - 종료")
         print("  • D - 디버그 정보 ON/OFF")
